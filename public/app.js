@@ -44,6 +44,25 @@ createApp({
     const existsName = ref('');
     const creating = ref(false);
     const palette = ['#8b3a2b', '#7d7d7d', '#7a5230', '#10173a', '#f1ebd8', '#2c2c30', '#2b6cb0', '#2e7d4f', '#b8860b', '#6b2f7a', '#c2185b', '#e6e6e6'];
+    const opening3d = ref(false);
+    let viewer3d = null;
+    // first-person 3D view of the wall (look-only). The module is loaded only when asked for.
+    async function open3D() {
+      if (viewer3d || opening3d.value) return;
+      opening3d.value = true;
+      try {
+        const mod = await import('/viewer3d.js');
+        viewer3d = await mod.open3D({
+          posts: posts.value.map((p) => ({ ...p })),
+          background: { ...background.value },
+          wallW: WALL_W, wallH: wallH.value, fonts: meta.fonts || [],
+          onClose: () => { viewer3d = null; },
+        });
+      } catch (e) {
+        error.value = '3D indisponível neste aparelho.';
+        console.error(e);
+      } finally { opening3d.value = false; }
+    }
     const showSetup = computed(() =>
       !loading.value && !wallSetup.value && posts.value.length === 0 && !setupDismissed.value);
     let poll = null;
@@ -362,7 +381,7 @@ createApp({
       slug, background, posts, total, loading, sending, error, freshId,
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
-      palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
+      opening3d, open3D, palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,
       applyBackground, setColor, setTexture, isPreset, go, goCustom,

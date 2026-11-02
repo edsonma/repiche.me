@@ -20,6 +20,10 @@
         <div class="actions">
           <button @click="showNav = true">muros</button>
           <button class="outline" @click="showCredits = true">créditos</button>
+          <button class="icon3d" @click="open3D" :disabled="opening3d" title="Ver o muro em 3D" aria-label="Ver o muro em 3D">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5 3.5 7v10L12 21.5 20.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+            <span>3D</span>
+          </button>
         </div>
       </header>
 

@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "express": "^4.19.2",
+    "three": "^0.170.0",
     "vue": "^3.4.0"
   }
 }

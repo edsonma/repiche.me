@@ -125,6 +125,9 @@ app.set('trust proxy', 1); // behind Railway's proxy: req.ip must be the real cl
 app.use(express.json({ limit: '4kb' }));
 app.get('/health', (req, res) => res.json({ ok: true }));
 app.use(express.static(path.join(__dirname, 'public')));
+app.get('/vendor/three.js', (req, res) =>
+  res.sendFile(path.join(__dirname, 'node_modules/three/build/three.module.min.js'))
+);
 app.use('/vendor/vue.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/vue/dist/vue.global.prod.js'))
 );

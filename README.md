@@ -32,6 +32,7 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 - Creating a wall: opening an unused name with no scribbles shows "Crie seu muro" (name + color/texture). Nothing is stored until "Criar muro"
 - Textured wall backgrounds (chosen once at creation, locked afterwards): 9 presets, or any color + one of 8 textures (brick, concrete, wood, paper, grunge, tiles, metal, plain), drawn with CSS/SVG (no image files)
 - Zoom: in capped at 300%, out unlimited (floor 0.1%). +/- buttons, Ctrl/Cmd+wheel or trackpad pinch, two-finger pinch on phones.
+- 3D view (cube button, top right): first-person, look-only walk along the wall (Three.js, loaded on demand). One canvas texture for the whole wall, one sun shadow, pixel ratio capped, renders only when something changes
 - Credits button with the original piche.me creators and references
 - Recent walls modal, live polling
 - Whitelisted fonts/colors, 140-char limit, per-IP rate limit
