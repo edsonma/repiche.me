@@ -3,7 +3,10 @@ const { createApp, reactive, ref, computed, onMounted, onBeforeUnmount } = Vue;
 // Zoom: in is capped, out is not (the floor only keeps the scale a valid, positive number).
 const ZOOM_MAX = 3;
 const ZOOM_MIN = 0.001;
-const MAX_WALL_W = 1100; // width of the board at 100% on a wide screen
+// Board width in px at 100%. Fixed (not tied to the screen) so every device sees the same wall:
+// wide on purpose, so you scroll sideways, but bounded so it never gets lost. 2400 is about two
+// desktop screens or six phone screens; change this one number to make the wall narrower/wider.
+const WALL_W = 2400;
 const MAX_Y = 20000;     // keep in sync with server.js
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -34,6 +37,15 @@ createApp({
     const vp = reactive({ w: 0, h: 0 });          // size of the scroll area
     const placing = ref(null);                    // { x, y, rot } while a new scribble is being positioned
     const draggingGhost = ref(false);
+    // creation step: a wall nobody named/styled yet and with no scribbles gets the "Crie seu muro" popup
+    const wallSetup = ref(true);             // true until the server says otherwise (no flash while loading)
+    const setupDismissed = ref(false);
+    const setupName = ref('');
+    const setupError = ref('');
+    const existsName = ref('');
+    const creating = ref(false);
+    const showSetup = computed(() =>
+      !loading.value && !wallSetup.value && posts.value.length === 0 && !setupDismissed.value);
     let poll = null;
     let ro = null;
 
@@ -53,8 +65,8 @@ createApp({
 
     const sameBg = (a, b) => a && b && a.color === b.color && a.texture === b.texture;
 
-    // ---- board geometry (at zoom 1 the board is as wide as the screen, up to MAX_WALL_W) ----
-    const baseW = computed(() => Math.max(240, Math.min(vp.w || 1000, MAX_WALL_W)));
+    // ---- board geometry (the board is WALL_W wide at zoom 1; the viewport scrolls over it) ----
+    const baseW = computed(() => WALL_W);
     const wallH = computed(() => {
       let bottom = 0;
       for (const p of posts.value) bottom = Math.max(bottom, p.y + p.size * 1.4);
@@ -94,8 +106,16 @@ createApp({
         background.value = w.background;
         posts.value = w.posts;
         total.value = w.total;
+        wallSetup.value = w.setup !== false;
+        setupDismissed.value = false;
+        setupError.value = ''; existsName.value = '';
+        setupName.value = slug.value === 'home' ? '' : slug.value; // the home page has no name yet
         document.title = `/${slug.value} · repiche.me`;
-        Vue.nextTick(() => { const v = viewportEl.value; if (v) { v.scrollTop = 0; v.scrollLeft = 0; } });
+        // start at the top, in the middle of the wide board
+        Vue.nextTick(() => {
+          const v = viewportEl.value;
+          if (v) { v.scrollTop = 0; v.scrollLeft = Math.max(0, (v.scrollWidth - v.clientWidth) / 2); }
+        });
       } catch (e) {
         error.value = e.message;
       } finally {
@@ -113,7 +133,8 @@ createApp({
         const incoming = w.posts.filter((p) => !known.has(p.id));
         if (incoming.length) posts.value = [...posts.value, ...incoming];
         total.value = w.total;
-        const bgBusy = bgTimer !== null || bgSaving || versionAtRequest !== bgVersion;
+        wallSetup.value = w.setup !== false; // someone else may have created this wall meanwhile
+        const bgBusy = bgTimer !== null || bgSaving || versionAtRequest !== bgVersion || showSetup.value;
         if (!bgBusy && !sameBg(background.value, w.background)) background.value = w.background;
       } catch { /* ignore transient errors */ }
     }
@@ -201,7 +222,7 @@ createApp({
       // nudge the scroll area when the pointer is near its edge (long walls, zoomed in)
       const v = viewportEl.value, vr = v.getBoundingClientRect(), edge = 48;
       if (e.clientY < vr.top + edge) v.scrollTop -= 14;
-      else if (e.clientY > vr.bottom - edge - 90) v.scrollTop += 14; // 90 ≈ compose bar overlap
+      else if (e.clientY > vr.bottom - edge) v.scrollTop += 14;
       if (e.clientX < vr.left + edge) v.scrollLeft -= 14;
       else if (e.clientX > vr.right - edge) v.scrollLeft += 14;
 
@@ -240,6 +261,7 @@ createApp({
     // ---- background: change locally right away, save (debounced) to the wall ----
     function applyBackground(bg) {
       background.value = { color: bg.color, texture: bg.texture };
+      if (showSetup.value) return; // still creating the wall: saved together with the name by "Criar muro"
       bgVersion++;
       bgSlug = slug.value;
       clearTimeout(bgTimer);
@@ -263,6 +285,33 @@ createApp({
         error.value = e.message;
       } finally {
         bgSaving = false;
+      }
+    }
+
+    // ---- creating a wall: name + look, then it exists ----
+    function cleanSetupName() {
+      setupName.value = setupName.value.toLowerCase().replace(/\s+/g, '-').replace(/[^a-z0-9_-]/g, '').slice(0, 30);
+      setupError.value = ''; existsName.value = '';
+    }
+    async function createWall() {
+      if (creating.value) return;
+      cleanSetupName();
+      const name = setupName.value;
+      if (!name) { setupError.value = 'Escolha um nome para o muro.'; return; }
+      creating.value = true;
+      try {
+        await api(`/api/walls/${encodeURIComponent(name)}/setup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ background: background.value }),
+        });
+        if (name === slug.value) wallSetup.value = true; // same URL: just close the popup
+        else go(name);                                    // new name: open that wall
+      } catch (e) {
+        setupError.value = e.message;
+        if (/já existe/.test(e.message)) existsName.value = name;
+      } finally {
+        creating.value = false;
       }
     }
 
@@ -323,6 +372,7 @@ createApp({
       slug, background, posts, total, loading, sending, error, freshId,
       meta, draft, showNav, showBg, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
+      showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,
       applyBackground, setColor, setTexture, isPreset, go, goCustom,

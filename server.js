@@ -64,6 +64,9 @@ try {
 if (!db.walls) db.walls = {};
 for (const w of Object.values(db.walls)) {
   w.background = normalizeBackground(w.background) || { ...PRESETS.brick };
+  // A wall counts as "set up" (named + styled) once it has a scribble or went through creation.
+  // Older walls that only exist because someone once visited the URL are not.
+  w.setup = w.setup === true || (w.posts || []).length > 0;
   // Older posts had no y (they were stacked newest-first) and x on a 0-70 scale.
   // Give them a fixed spot once, in that same order, so they keep it from now on.
   const legacy = (w.posts || []).filter((p) => typeof p.y !== 'number').sort((a, b) => b.id - a.id);
@@ -95,23 +98,26 @@ function save() {
 
 function getWall(slug, create = false) {
   if (!db.walls[slug] && create) {
-    db.walls[slug] = { slug, background: { ...PRESETS.brick }, createdAt: Date.now(), posts: [] };
+    db.walls[slug] = { slug, background: { ...PRESETS.brick }, setup: false, createdAt: Date.now(), posts: [] };
     save();
   }
   return db.walls[slug];
 }
 
-// ---- Naive per-IP rate limit (1 post / 3s) -------------------------------
-const lastPost = new Map();
-function rateLimit(req, res, next) {
-  const ip = req.ip;
-  const now = Date.now();
-  if (now - (lastPost.get(ip) || 0) < 3000) {
-    return res.status(429).json({ error: 'Calma! Espere alguns segundos.' });
-  }
-  lastPost.set(ip, now);
-  next();
+// ---- Naive per-IP rate limits ---------------------------------------------
+function limiter(ms) {
+  const last = new Map();
+  return (req, res, next) => {
+    const now = Date.now();
+    if (now - (last.get(req.ip) || 0) < ms) {
+      return res.status(429).json({ error: 'Calma! Espere alguns segundos.' });
+    }
+    last.set(req.ip, now);
+    next();
+  };
 }
+const rateLimit = limiter(3000);    // 1 scribble / 3s
+const setupLimit = limiter(2000);   // 1 new wall / 2s
 
 // ---- App -------------------------------------------------------------------
 const app = express();
@@ -130,6 +136,7 @@ app.get('/api/meta', (req, res) =>
 // Recently active walls (for the navigation modal)
 app.get('/api/walls', (req, res) => {
   const walls = Object.values(db.walls)
+    .filter((w) => w.setup)
     .map((w) => ({
       slug: w.slug,
       background: w.background,
@@ -145,7 +152,12 @@ app.get('/api/walls', (req, res) => {
 app.get('/api/walls/:slug', (req, res) => {
   const slug = req.params.slug.toLowerCase();
   if (!SLUG_RE.test(slug)) return res.status(400).json({ error: 'Nome de muro inválido.' });
-  const wall = getWall(slug, true);
+  // Visiting an unknown URL does not create anything: it just shows a blank, not-yet-set-up wall,
+  // so the client can offer the "create your wall" step (name + look) first.
+  const wall = db.walls[slug];
+  if (!wall) {
+    return res.json({ slug, background: { ...PRESETS.brick }, total: 0, posts: [], setup: false });
+  }
 
   // The wall is a 2D board, so every scribble is needed to draw it (oldest first = bottom layer).
   res.json({
@@ -153,6 +165,7 @@ app.get('/api/walls/:slug', (req, res) => {
     background: wall.background,
     total: wall.posts.length,
     posts: wall.posts,
+    setup: !!wall.setup,
   });
 });
 
@@ -164,8 +177,29 @@ app.post('/api/walls/:slug/background', (req, res) => {
   if (!bg) return res.status(400).json({ error: 'Fundo inválido.' });
   const wall = getWall(slug, true);
   wall.background = bg;
+  wall.setup = true;
   save();
   res.json({ background: wall.background });
+});
+
+// Creation step: pick the name (the URL) and the look before the first scribble.
+// 409 if that wall already exists, so nobody can overwrite someone else's wall this way.
+const RESERVED = new Set(['api', 'health', 'vendor', 'home']);
+app.post('/api/walls/:slug/setup', setupLimit, (req, res) => {
+  const slug = req.params.slug.toLowerCase();
+  if (!SLUG_RE.test(slug)) {
+    return res.status(400).json({ error: 'Nome inválido. Use letras, números, - ou _ (até 30).' });
+  }
+  if (RESERVED.has(slug)) return res.status(400).json({ error: 'Esse nome é reservado. Escolha outro.' });
+  const bg = normalizeBackground((req.body || {}).background);
+  if (!bg) return res.status(400).json({ error: 'Fundo inválido.' });
+  const existing = db.walls[slug];
+  if (existing && existing.setup) return res.status(409).json({ error: 'Esse muro já existe.' });
+  const wall = getWall(slug, true);
+  wall.background = bg;
+  wall.setup = true;
+  save();
+  res.status(201).json({ slug, background: wall.background });
 });
 
 app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
@@ -198,6 +232,7 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
     createdAt: Date.now(),
   };
   wall.posts.push(post);
+  wall.setup = true;
   if (wall.posts.length > MAX_POSTS_PER_WALL) wall.posts.shift();
   save();
   res.status(201).json(post);

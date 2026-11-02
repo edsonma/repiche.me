@@ -91,6 +91,38 @@
         <div class="error" v-if="error">{{ error }}</div>
       </form>
 
+      <!-- creation popup: a wall with no name/look yet and no scribbles -->
+      <div class="modal-backdrop" v-if="showSetup">
+        <div class="modal setup">
+          <h2>Crie seu muro</h2>
+          <p>Escolha o nome (o endereço) e a cara do muro antes da primeira pichação.</p>
+          <label class="field">Nome do muro
+            <span class="namerow">repiche.me/
+              <input v-model="setupName" @input="cleanSetupName" maxlength="30" placeholder="nome-do-muro" autocomplete="off">
+            </span>
+          </label>
+          <div class="row">
+            <button type="button" v-for="(p, name) in meta.presets" :key="name"
+                    class="swatch" :class="['tx-' + p.texture, { on: isPreset(p) }]"
+                    :style="{ '--wall': p.color }" :title="name" @click="applyBackground(p)"></button>
+          </div>
+          <div class="row">
+            <label class="colorpick">cor
+              <input type="color" :value="background.color" @input="setColor($event.target.value)">
+            </label>
+            <button type="button" v-for="t in meta.textures" :key="t.id" class="chip"
+                    :class="{ on: background.texture === t.id }" @click="setTexture(t.id)">{{ t.label }}</button>
+          </div>
+          <p class="err" v-if="setupError">{{ setupError }}
+            <a v-if="existsName" :href="'/' + existsName" @click.prevent="go(existsName)">Entrar em /{{ existsName }}</a>
+          </p>
+          <div class="btns">
+            <button type="button" :disabled="creating" @click="createWall">Criar muro</button>
+            <button type="button" class="secondary" @click="setupDismissed = true">agora não</button>
+          </div>
+        </div>
+      </div>
+
       <!-- wall navigation modal -->
       <div class="modal-backdrop" v-if="showNav" @click.self="showNav = false">
         <div class="modal">
