@@ -3,7 +3,11 @@ const fs = require('fs');
 const path = require('path');
 
 const PORT = process.env.PORT || 3000;
-const DATA_FILE = path.join(__dirname, 'data', 'db.json');
+// On Railway, attach a Volume: RAILWAY_VOLUME_MOUNT_PATH is set automatically.
+// Without a volume the filesystem is ephemeral and walls vanish on every deploy.
+const DATA_DIR =
+  process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'data');
+const DATA_FILE = path.join(DATA_DIR, 'db.json');
 
 // ---- Limits / whitelists -------------------------------------------------
 const MAX_TEXT = 140;
@@ -27,13 +31,21 @@ try {
 }
 
 let saveTimer = null;
+function flush() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  try {
+    // write to a temp file then rename, so a crash mid-write can't corrupt the db
+    const tmp = DATA_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(db));
+    fs.renameSync(tmp, DATA_FILE);
+  } catch (err) {
+    console.error('Failed to save db:', err);
+  }
+}
 function save() {
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(() => {
-    fs.writeFile(DATA_FILE, JSON.stringify(db), (err) => {
-      if (err) console.error('Failed to save db:', err);
-    });
-  }, 300);
+  saveTimer = setTimeout(flush, 300);
 }
 
 function getWall(slug, create = false) {
@@ -58,7 +70,9 @@ function rateLimit(req, res, next) {
 
 // ---- App -------------------------------------------------------------------
 const app = express();
+app.set('trust proxy', 1); // behind Railway's proxy: req.ip must be the real client IP
 app.use(express.json({ limit: '4kb' }));
+app.get('/health', (req, res) => res.json({ ok: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.use('/vendor/vue.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/vue/dist/vue.global.prod.js'))
@@ -145,4 +159,15 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
 app.get('/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
-app.listen(PORT, () => console.log(`piche clone running at http://localhost:${PORT}`));
+const server = app.listen(PORT, '0.0.0.0', () =>
+  console.log(`piche clone running on port ${PORT}, data in ${DATA_FILE}`)
+);
+
+// Railway sends SIGTERM on redeploy: write pending changes before exiting.
+function shutdown() {
+  if (saveTimer) flush();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', shutdown);
+process.on('SIGINT', shutdown);

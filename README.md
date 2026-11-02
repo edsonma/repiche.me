@@ -13,6 +13,16 @@ npm start
 
 Open http://localhost:3000. Any path is a wall: `/meunome` creates one on first visit.
 
+## Deploy on Railway
+
+1. New Project > Deploy from GitHub repo > pick this repo (Railway detects Node and runs `npm start`).
+2. Add a **Volume** to the service and mount it at `/data`. Walls are stored in `db.json` there; without a volume they are lost on every deploy.
+3. Service > Settings > Networking > **Generate Domain**.
+
+Environment: `PORT` is set by Railway. `DATA_DIR` is optional; it defaults to the volume mount path (`RAILWAY_VOLUME_MOUNT_PATH`), then to `./data`. Health check: `GET /health`.
+
+The JSON file store suits a single instance only (keep replicas at 1). Move to Postgres/SQLite before scaling.
+
 ## Features
 
 - Anonymous walls by URL, scribbles with chosen font, color, size and weight
