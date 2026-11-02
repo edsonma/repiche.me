@@ -26,7 +26,6 @@ createApp({
     const meta = reactive({ fonts: ['Permanent Marker'], textures: [], presets: {}, maxText: 140 });
     const draft = reactive({ text: '', font: 'Permanent Marker', color: '#ffffff', size: 28, bold: false });
     const showNav = ref(false);
-    const showBg = ref(false);
     const showCredits = ref(false);
     const walls = ref([]);
     const newSlug = ref('');
@@ -51,10 +50,6 @@ createApp({
 
     // Background save state. A poll response that was requested before the latest local
     // change (or while a save is pending) must not overwrite what the user just picked.
-    let bgVersion = 0;
-    let bgTimer = null;
-    let bgSaving = false;
-    let bgSlug = null;
 
     async function api(url, opts) {
       const res = await fetch(url, opts);
@@ -126,7 +121,6 @@ createApp({
     // Pull in scribbles other people added since we last looked.
     async function refresh() {
       if (loading.value || sending.value) return;
-      const versionAtRequest = bgVersion;
       try {
         const w = await api(`/api/walls/${encodeURIComponent(slug.value)}`);
         const known = new Set(posts.value.map((p) => p.id));
@@ -134,7 +128,7 @@ createApp({
         if (incoming.length) posts.value = [...posts.value, ...incoming];
         total.value = w.total;
         wallSetup.value = w.setup !== false; // someone else may have created this wall meanwhile
-        const bgBusy = bgTimer !== null || bgSaving || versionAtRequest !== bgVersion || showSetup.value;
+        const bgBusy = showSetup.value;
         if (!bgBusy && !sameBg(background.value, w.background)) background.value = w.background;
       } catch { /* ignore transient errors */ }
     }
@@ -258,35 +252,14 @@ createApp({
     }
     const onSubmit = () => (placing.value ? commitPlacing() : startPlacing());
 
-    // ---- background: change locally right away, save (debounced) to the wall ----
+    // ---- background: only editable in the creation popup (the server refuses changes afterwards) ----
     function applyBackground(bg) {
+      if (!showSetup.value) return;
       background.value = { color: bg.color, texture: bg.texture };
-      if (showSetup.value) return; // still creating the wall: saved together with the name by "Criar muro"
-      bgVersion++;
-      bgSlug = slug.value;
-      clearTimeout(bgTimer);
-      bgTimer = setTimeout(saveBackground, 350);
     }
     const setColor = (color) => applyBackground({ color, texture: background.value.texture });
     const setTexture = (texture) => applyBackground({ color: background.value.color, texture });
     const isPreset = (p) => sameBg(background.value, p);
-
-    async function saveBackground() {
-      bgTimer = null;
-      bgSaving = true;
-      const bg = { ...background.value };
-      try {
-        await api(`/api/walls/${encodeURIComponent(bgSlug)}/background`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(bg),
-        });
-      } catch (e) {
-        error.value = e.message;
-      } finally {
-        bgSaving = false;
-      }
-    }
 
     // ---- creating a wall: name + look, then it exists ----
     function cleanSetupName() {
@@ -370,7 +343,7 @@ createApp({
 
     return {
       slug, background, posts, total, loading, sending, error, freshId,
-      meta, draft, showNav, showBg, showCredits, walls, newSlug,
+      meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
       showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,

@@ -169,18 +169,10 @@ app.get('/api/walls/:slug', (req, res) => {
   });
 });
 
-app.post('/api/walls/:slug/background', (req, res) => {
-  const slug = req.params.slug.toLowerCase();
-  if (!SLUG_RE.test(slug)) return res.status(400).json({ error: 'Nome de muro inválido.' });
-  const body = req.body || {};
-  const bg = normalizeBackground(body.background !== undefined ? body.background : body);
-  if (!bg) return res.status(400).json({ error: 'Fundo inválido.' });
-  const wall = getWall(slug, true);
-  wall.background = bg;
-  wall.setup = true;
-  save();
-  res.json({ background: wall.background });
-});
+// The look is chosen once, when the wall is created (POST .../setup), and can't be changed afterwards.
+app.post('/api/walls/:slug/background', (req, res) =>
+  res.status(403).json({ error: 'O fundo não pode ser alterado depois que o muro é criado.' })
+);
 
 // Creation step: pick the name (the URL) and the look before the first scribble.
 // 409 if that wall already exists, so nobody can overwrite someone else's wall this way.

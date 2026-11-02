@@ -18,26 +18,9 @@
         <div class="wall-name">/{{ slug }} <small v-if="total">({{ total }} pichações)</small></div>
         <div class="actions">
           <button @click="showNav = true">muros</button>
-          <button @click="showBg = !showBg">fundo</button>
           <button class="outline" @click="showCredits = true">créditos</button>
         </div>
       </header>
-
-      <!-- background picker: presets, custom color, texture -->
-      <div class="bg-picker" v-if="showBg">
-        <div class="row">
-          <button v-for="(p, name) in meta.presets" :key="name"
-                  class="swatch" :class="['tx-' + p.texture, { on: isPreset(p) }]"
-                  :style="{ '--wall': p.color }" :title="name" @click="applyBackground(p)"></button>
-        </div>
-        <div class="row">
-          <label class="colorpick">cor
-            <input type="color" :value="background.color" @input="setColor($event.target.value)">
-          </label>
-          <button v-for="t in meta.textures" :key="t.id" class="chip"
-                  :class="{ on: background.texture === t.id }" @click="setTexture(t.id)">{{ t.label }}</button>
-        </div>
-      </div>
 
       <!-- The wall is a 2D board inside a scroll area. Scribbles are absolutely positioned
            (x = % of the free width, y = px from the top), so they never move around.

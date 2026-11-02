@@ -26,10 +26,11 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 ## Features
 
 - Anonymous walls by URL, scribbles with chosen font, color, size and weight
+- Scribbles are permanent: text and position cannot be edited or moved once fixed (the API has no edit/delete routes)
 - 2D wall: after "Pichar" drag the scribble anywhere, then "Fixar aqui". Position is saved and identical on every reload and for every visitor
 - Wide wall: the board is 2400px wide (constant `WALL_W` in `public/app.js`), scroll sideways inside it; starts centered
 - Creating a wall: opening an unused name with no scribbles shows "Crie seu muro" (name + color/texture). Nothing is stored until "Criar muro"
-- Textured wall backgrounds: 9 presets, or any color + one of 8 textures (brick, concrete, wood, paper, grunge, tiles, metal, plain), drawn with CSS/SVG (no image files)
+- Textured wall backgrounds (chosen once at creation, locked afterwards): 9 presets, or any color + one of 8 textures (brick, concrete, wood, paper, grunge, tiles, metal, plain), drawn with CSS/SVG (no image files)
 - Zoom: in capped at 300%, out unlimited (floor 0.1%). +/- buttons, Ctrl/Cmd+wheel or trackpad pinch, two-finger pinch on phones.
 - Credits button with the original piche.me creators and references
 - Recent walls modal, live polling
