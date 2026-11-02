@@ -80,7 +80,7 @@
             <button type="button" class="secondary" @click="placing.rot = 0" title="sem rotação">0°</button>
           </label>
         </div>
-        <div class="preview" v-else :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: Math.min(draft.size, 40) + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
+        <div class="preview" v-else :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: draft.size + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
           {{ draft.text || 'pré-visualização' }}
         </div>
         <div class="error" v-if="error">{{ error }}</div>

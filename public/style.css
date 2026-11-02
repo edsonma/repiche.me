@@ -155,7 +155,7 @@ button:disabled { opacity: .5; cursor: wait; }
 .compose select { padding: 8px; border-radius: 6px; max-width: 170px; }
 .compose input[type=color] { width: 40px; height: 36px; border: 0; padding: 0; background: none; }
 .compose .bold { cursor: pointer; user-select: none; }
-.preview { flex-basis: 100%; min-height: 36px; text-shadow: 0 1px 3px #000; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.preview { flex-basis: 100%; min-height: 36px; max-height: 96px; line-height: 1.15; text-shadow: 0 1px 3px #000; overflow: hidden; overflow-wrap: anywhere; }
 .error { flex-basis: 100%; color: #ffb4a8; }
 .hint { flex-basis: 100%; min-height: 36px; display: flex; align-items: center; font-size: 15px; }
 .compose button.secondary { background: #555; }
