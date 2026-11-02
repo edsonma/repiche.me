@@ -12,7 +12,7 @@ const DATA_FILE = path.join(DATA_DIR, 'db.json');
 // ---- Limits / whitelists -------------------------------------------------
 const MAX_TEXT = 140;
 const MAX_POSTS_PER_WALL = 2000;
-const PAGE_SIZE = 40;
+const MAX_Y = 20000; // px from the top of the wall; x is 0-100 (% of the free width)
 const FONTS = [
   'Permanent Marker', 'Rock Salt', 'Special Elite', 'Londrina Solid',
   'Pacifico', 'Bangers', 'Caveat', 'Creepster', 'Fredericka the Great',
@@ -64,6 +64,15 @@ try {
 if (!db.walls) db.walls = {};
 for (const w of Object.values(db.walls)) {
   w.background = normalizeBackground(w.background) || { ...PRESETS.brick };
+  // Older posts had no y (they were stacked newest-first) and x on a 0-70 scale.
+  // Give them a fixed spot once, in that same order, so they keep it from now on.
+  const legacy = (w.posts || []).filter((p) => typeof p.y !== 'number').sort((a, b) => b.id - a.id);
+  let cursor = 24;
+  for (const p of legacy) {
+    p.x = Math.min(100, Math.round((p.x || 0) / 0.7));
+    p.y = cursor;
+    cursor += Math.round((p.size || 28) * 1.2) + 14;
+  }
 }
 
 let saveTimer = null;
@@ -138,17 +147,12 @@ app.get('/api/walls/:slug', (req, res) => {
   if (!SLUG_RE.test(slug)) return res.status(400).json({ error: 'Nome de muro inválido.' });
   const wall = getWall(slug, true);
 
-  const before = parseInt(req.query.before, 10);
-  let posts = wall.posts;
-  if (!Number.isNaN(before)) posts = posts.filter((p) => p.id < before);
-  const page = posts.slice(-PAGE_SIZE).reverse();
-
+  // The wall is a 2D board, so every scribble is needed to draw it (oldest first = bottom layer).
   res.json({
     slug: wall.slug,
     background: wall.background,
     total: wall.posts.length,
-    posts: page,
-    hasMore: posts.length > PAGE_SIZE,
+    posts: wall.posts,
   });
 });
 
@@ -168,7 +172,9 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
   const slug = req.params.slug.toLowerCase();
   if (!SLUG_RE.test(slug)) return res.status(400).json({ error: 'Nome de muro inválido.' });
 
-  const { text, font, color, size, bold } = req.body || {};
+  const { text, font, color, size, bold, x, y, rot } = req.body || {};
+  const num = (v) => typeof v === 'number' && Number.isFinite(v);
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   const clean = typeof text === 'string' ? text.trim().slice(0, MAX_TEXT) : '';
   if (!clean) return res.status(400).json({ error: 'Escreva algo!' });
   if (!FONTS.includes(font)) return res.status(400).json({ error: 'Fonte inválida.' });
@@ -184,9 +190,11 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
     color,
     size: fontSize,
     bold: !!bold,
-    // random layout, decided once so every visitor sees the same wall
-    x: Math.round(Math.random() * 70),   // % from left
-    rot: Math.round((Math.random() * 30 - 15) * 10) / 10, // degrees
+    // Where the author dropped it. Saved as-is so the scribble stays put for everyone, forever.
+    // (x/y/rot are chosen randomly only if a client doesn't send them.)
+    x: num(x) ? clamp(Math.round(x * 10) / 10, 0, 100) : Math.round(Math.random() * 100),
+    y: num(y) ? clamp(Math.round(y), 0, MAX_Y) : Math.round(Math.random() * 600),
+    rot: num(rot) ? clamp(Math.round(rot * 10) / 10, -20, 20) : Math.round((Math.random() * 30 - 15) * 10) / 10,
     createdAt: Date.now(),
   };
   wall.posts.push(post);

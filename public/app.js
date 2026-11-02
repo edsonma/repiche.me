@@ -1,8 +1,11 @@
 const { createApp, reactive, ref, computed, onMounted, onBeforeUnmount } = Vue;
 
-// Zoom: in is capped, out is not (the floor only keeps the CSS zoom value a valid, positive number).
+// Zoom: in is capped, out is not (the floor only keeps the scale a valid, positive number).
 const ZOOM_MAX = 3;
 const ZOOM_MIN = 0.001;
+const MAX_WALL_W = 1100; // width of the board at 100% on a wide screen
+const MAX_Y = 20000;     // keep in sync with server.js
+const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 createApp({
   setup() {
@@ -13,7 +16,6 @@ createApp({
     const background = ref({ color: '#1c1c1e', texture: 'none' });
     const posts = ref([]);
     const total = ref(0);
-    const hasMore = ref(false);
     const loading = ref(true);
     const sending = ref(false);
     const error = ref('');
@@ -26,12 +28,14 @@ createApp({
     const walls = ref([]);
     const newSlug = ref('');
     const zoom = ref(1);
+    const viewportEl = ref(null);
     const wallEl = ref(null);
-    const sentinel = ref(null);
+    const ghostEl = ref(null);
+    const vp = reactive({ w: 0, h: 0 });          // size of the scroll area
+    const placing = ref(null);                    // { x, y, rot } while a new scribble is being positioned
+    const draggingGhost = ref(false);
     let poll = null;
-    let io = null;
-    let moreFailed = false;
-    let loadingMore = false;
+    let ro = null;
 
     // Background save state. A poll response that was requested before the latest local
     // change (or while a save is pending) must not overwrite what the user just picked.
@@ -47,32 +51,59 @@ createApp({
       return data;
     }
 
-    // Horizontal spot as 0-100. `left: N%` + `translateX(-N%)` places the scribble at N% of the
-    // free space, so it always stays fully inside the wall (no sideways scrolling on phones).
-    // Stored x is 0-70 from the server.
-    const pct = (p) => Math.min(100, Math.max(0, Math.round(p.x / 0.7)));
-
     const sameBg = (a, b) => a && b && a.color === b.color && a.texture === b.texture;
+
+    // ---- board geometry (at zoom 1 the board is as wide as the screen, up to MAX_WALL_W) ----
+    const baseW = computed(() => Math.max(240, Math.min(vp.w || 1000, MAX_WALL_W)));
+    const wallH = computed(() => {
+      let bottom = 0;
+      for (const p of posts.value) bottom = Math.max(bottom, p.y + p.size * 1.4);
+      if (placing.value) bottom = Math.max(bottom, placing.value.y + draft.size * 1.4);
+      return Math.max(vp.h || 600, Math.ceil(bottom) + 240); // always some room below the lowest scribble
+    });
+    function measure() {
+      const v = viewportEl.value;
+      if (v) { vp.w = v.clientWidth; vp.h = v.clientHeight; }
+    }
+
+    // x is the scribble's spot across the *free* width: `left: x%` + `translateX(-x%)` keeps it
+    // fully inside the board at any width. y is px from the top.
+    const scribbleStyle = (p) => ({
+      left: p.x + '%',
+      top: p.y + 'px',
+      transform: `translateX(-${p.x}%) rotate(${p.rot}deg)`,
+      color: p.color,
+      fontFamily: `'${p.font}', cursive`,
+      fontSize: p.size + 'px',
+      fontWeight: p.bold ? 'bold' : 'normal',
+    });
+    const ghostStyle = computed(() => !placing.value ? {} : scribbleStyle({
+      ...placing.value, color: draft.color, font: draft.font, size: draft.size, bold: draft.bold,
+    }));
+
+    // screen point -> board coordinates (the board is only ever scaled, never rotated)
+    function toWall(clientX, clientY) {
+      const r = wallEl.value.getBoundingClientRect();
+      return { x: (clientX - r.left) / zoom.value, y: (clientY - r.top) / zoom.value };
+    }
 
     async function loadWall() {
       loading.value = true;
-      moreFailed = false;
       try {
         const w = await api(`/api/walls/${encodeURIComponent(slug.value)}`);
         background.value = w.background;
         posts.value = w.posts;
         total.value = w.total;
-        hasMore.value = w.hasMore;
         document.title = `/${slug.value} · repiche.me`;
+        Vue.nextTick(() => { const v = viewportEl.value; if (v) { v.scrollTop = 0; v.scrollLeft = 0; } });
       } catch (e) {
         error.value = e.message;
       } finally {
         loading.value = false;
-        recheck();
       }
     }
 
-    // Pull in posts other people made since we last looked.
+    // Pull in scribbles other people added since we last looked.
     async function refresh() {
       if (loading.value || sending.value) return;
       const versionAtRequest = bgVersion;
@@ -80,66 +111,32 @@ createApp({
         const w = await api(`/api/walls/${encodeURIComponent(slug.value)}`);
         const known = new Set(posts.value.map((p) => p.id));
         const incoming = w.posts.filter((p) => !known.has(p.id));
-        if (incoming.length) posts.value = [...incoming, ...posts.value];
+        if (incoming.length) posts.value = [...posts.value, ...incoming];
         total.value = w.total;
         const bgBusy = bgTimer !== null || bgSaving || versionAtRequest !== bgVersion;
         if (!bgBusy && !sameBg(background.value, w.background)) background.value = w.background;
       } catch { /* ignore transient errors */ }
     }
 
-    // ---- older scribbles: loaded by the button, or automatically when the end of the wall
-    // comes into view (which is what happens when you zoom out) ----
-    async function loadMore(manual = false) {
-      if (manual === true) moreFailed = false;
-      if (loadingMore || !hasMore.value) return;
-      const oldest = posts.value[posts.value.length - 1];
-      if (!oldest) return;
-      loadingMore = true;
-      const slugAtStart = slug.value;
-      try {
-        const w = await api(`/api/walls/${encodeURIComponent(slugAtStart)}?before=${oldest.id}`);
-        if (slugAtStart !== slug.value) return; // navigated to another wall meanwhile
-        const known = new Set(posts.value.map((p) => p.id));
-        posts.value = [...posts.value, ...w.posts.filter((p) => !known.has(p.id))];
-        hasMore.value = w.hasMore;
-      } catch (e) {
-        moreFailed = true; // stop auto-retrying; the button still works
-        error.value = e.message;
-      } finally {
-        loadingMore = false;
-        recheck();
-      }
-    }
-
-    // IntersectionObserver only reports changes, so re-observe to get a fresh reading
-    // (needed when the end of the wall is still on screen after a page loaded).
-    function recheck() {
-      if (!io || !sentinel.value) return;
-      Vue.nextTick(() => {
-        if (!sentinel.value) return;
-        io.unobserve(sentinel.value);
-        io.observe(sentinel.value);
-      });
-    }
-
-    // ---- zoom ----
+    // ---- zoom (uniform scale of the board; the point under the cursor/fingers stays put) ----
     const zoomLabel = computed(() => {
       const p = zoom.value * 100;
       return (p >= 10 ? Math.round(p) : p >= 1 ? p.toFixed(1) : p.toFixed(2)) + '%';
     });
 
-    // Keeps the content under `anchorY` (viewport px) in place while the wall resizes.
-    function setZoom(z, anchorY = window.innerHeight / 2) {
-      z = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z));
+    function setZoom(z, ax, ay) {
+      z = clamp(z, ZOOM_MIN, ZOOM_MAX);
       if (!(Math.abs(z - zoom.value) > 1e-9)) return;
-      const el = wallEl.value;
-      const r0 = el.getBoundingClientRect();
-      const frac = r0.height ? (anchorY - r0.top) / r0.height : 0;
+      const v = viewportEl.value;
+      const vr = v.getBoundingClientRect();
+      if (ax === undefined) ax = vr.left + vr.width / 2;
+      if (ay === undefined) ay = vr.top + vr.height / 2;
+      const under = toWall(ax, ay); // board point under the anchor, before zooming
       zoom.value = z;
       Vue.nextTick(() => {
-        const r1 = el.getBoundingClientRect();
-        window.scrollBy(0, r1.top - (anchorY - frac * r1.height));
-        recheck();
+        const wr = wallEl.value.getBoundingClientRect();
+        v.scrollLeft += wr.left + under.x * z - ax;
+        v.scrollTop += wr.top + under.y * z - ay;
       });
     }
     const zoomBy = (factor) => setZoom(zoom.value * factor);
@@ -149,7 +146,7 @@ createApp({
       if (!(e.ctrlKey || e.metaKey)) return;
       e.preventDefault();
       const k = e.deltaMode === 0 ? 0.0025 : 0.05;
-      setZoom(zoom.value * Math.exp(-e.deltaY * k), e.clientY);
+      setZoom(zoom.value * Math.exp(-e.deltaY * k), e.clientX, e.clientY);
     }
 
     // two-finger pinch on touch screens
@@ -161,33 +158,84 @@ createApp({
     function onTouchMove(e) {
       if (!pinch || e.touches.length !== 2) return;
       e.preventDefault();
-      const y = (e.touches[0].clientY + e.touches[1].clientY) / 2;
-      setZoom(pinch.z0 * (dist(e.touches) / pinch.d0), y);
+      const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
+      const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
+      setZoom(pinch.z0 * (dist(e.touches) / pinch.d0), cx, cy);
     }
     function onTouchEnd(e) { if (e.touches.length < 2) pinch = null; }
     const stopGesture = (e) => e.preventDefault(); // iOS Safari page pinch
 
-    async function submit() {
+    // ---- placing a new scribble: "Pichar" -> drag it -> "Fixar aqui" ----
+    function startPlacing() {
       error.value = '';
-      if (!draft.text.trim()) return;
+      if (!draft.text.trim()) { error.value = 'Escreva algo!'; return; }
+      const vr = viewportEl.value.getBoundingClientRect();
+      // start in the middle of what you're looking at, above the compose bar
+      const c = toWall(vr.left + vr.width / 2, vr.top + vr.height * 0.4);
+      placing.value = {
+        x: 50,
+        y: clamp(Math.round(c.y - draft.size * 0.6), 0, MAX_Y),
+        rot: Math.round((Math.random() * 30 - 15) * 10) / 10,
+      };
+      Vue.nextTick(() => {
+        const g = ghostEl.value;
+        if (!g || !placing.value) return;
+        const free = baseW.value - g.offsetWidth;
+        placing.value.x = free > 1 ? clamp(Math.round(((c.x - g.offsetWidth / 2) / free) * 1000) / 10, 0, 100) : 50;
+      });
+    }
+
+    let drag = null;
+    function dragStart(e) {
+      if (!placing.value || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      e.preventDefault();
+      const g = ghostEl.value;
+      g.setPointerCapture(e.pointerId);
+      const p = toWall(e.clientX, e.clientY);
+      const left = (placing.value.x / 100) * (baseW.value - g.offsetWidth);
+      drag = { gw: g.offsetWidth, offX: p.x - left, offY: p.y - placing.value.y };
+      draggingGhost.value = true;
+    }
+    function dragMove(e) {
+      if (!drag || !placing.value) return;
+      // nudge the scroll area when the pointer is near its edge (long walls, zoomed in)
+      const v = viewportEl.value, vr = v.getBoundingClientRect(), edge = 48;
+      if (e.clientY < vr.top + edge) v.scrollTop -= 14;
+      else if (e.clientY > vr.bottom - edge - 90) v.scrollTop += 14; // 90 ≈ compose bar overlap
+      if (e.clientX < vr.left + edge) v.scrollLeft -= 14;
+      else if (e.clientX > vr.right - edge) v.scrollLeft += 14;
+
+      const p = toWall(e.clientX, e.clientY);
+      const free = baseW.value - drag.gw;
+      placing.value.x = free > 1 ? clamp(Math.round(((p.x - drag.offX) / free) * 1000) / 10, 0, 100) : 50;
+      placing.value.y = clamp(Math.round(p.y - drag.offY), 0, MAX_Y);
+    }
+    function dragEnd() { drag = null; draggingGhost.value = false; }
+
+    function cancelPlacing() { placing.value = null; error.value = ''; dragEnd(); }
+
+    async function commitPlacing() {
+      if (!placing.value || sending.value) return;
+      error.value = '';
       sending.value = true;
       try {
         const p = await api(`/api/walls/${encodeURIComponent(slug.value)}/posts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(draft),
+          body: JSON.stringify({ ...draft, x: placing.value.x, y: placing.value.y, rot: placing.value.rot }),
         });
-        posts.value = [p, ...posts.value];
+        posts.value = [...posts.value, p];
         total.value++;
         freshId.value = p.id;
         draft.text = '';
-        window.scrollTo({ top: 0, behavior: 'smooth' });
+        placing.value = null;
       } catch (e) {
-        error.value = e.message;
+        error.value = e.message; // stays in placing mode so nothing is lost
       } finally {
         sending.value = false;
       }
     }
+    const onSubmit = () => (placing.value ? commitPlacing() : startPlacing());
 
     // ---- background: change locally right away, save (debounced) to the wall ----
     function applyBackground(bg) {
@@ -224,6 +272,7 @@ createApp({
 
     function go(target) {
       showNav.value = false;
+      cancelPlacing();
       history.pushState({}, '', '/' + (target === 'home' ? '' : encodeURIComponent(target)));
       slug.value = slugFromPath();
       loadWall();
@@ -234,15 +283,12 @@ createApp({
       if (s) { newSlug.value = ''; go(s); }
     }
 
-    const onPop = () => { slug.value = slugFromPath(); loadWall(); };
+    const onPop = () => { cancelPlacing(); slug.value = slugFromPath(); loadWall(); };
 
     onMounted(async () => {
-      if ('IntersectionObserver' in window && sentinel.value) {
-        io = new IntersectionObserver((entries) => {
-          if (entries.some((e) => e.isIntersecting) && hasMore.value && !loading.value && !moreFailed) loadMore();
-        }, { rootMargin: '600px' });
-        io.observe(sentinel.value);
-      }
+      measure();
+      if ('ResizeObserver' in window) { ro = new ResizeObserver(measure); ro.observe(viewportEl.value); }
+      else window.addEventListener('resize', measure);
       window.addEventListener('wheel', onWheel, { passive: false });
       window.addEventListener('touchstart', onTouchStart, { passive: true });
       window.addEventListener('touchmove', onTouchMove, { passive: false });
@@ -258,7 +304,8 @@ createApp({
     });
     onBeforeUnmount(() => {
       clearInterval(poll);
-      if (io) io.disconnect();
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', measure);
       window.removeEventListener('popstate', onPop);
       window.removeEventListener('wheel', onWheel);
       window.removeEventListener('touchstart', onTouchStart);
@@ -273,10 +320,12 @@ createApp({
     Vue.watch(showNav, (v) => v && openNav());
 
     return {
-      slug, background, posts, total, hasMore, loading, sending, error, freshId,
+      slug, background, posts, total, loading, sending, error, freshId,
       meta, draft, showNav, showBg, showCredits, walls, newSlug,
-      zoom, zoomLabel, ZOOM_MAX, wallEl, sentinel, setZoom, zoomBy,
-      pct, submit, loadMore, applyBackground, setColor, setTexture, isPreset, go, goCustom,
+      zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
+      scribbleStyle, ghostStyle, setZoom, zoomBy,
+      onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,
+      applyBackground, setColor, setTexture, isPreset, go, goCustom,
     };
   },
 }).mount('#app');

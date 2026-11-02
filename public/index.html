@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, minimum-scale=1">
   <title>repiche.me</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Rock+Salt&family=Special+Elite&family=Londrina+Solid&family=Pacifico&family=Bangers&family=Caveat&family=Creepster&family=Fredericka+the+Great&family=Press+Start+2P&family=Shadows+Into+Light&family=Indie+Flower&display=swap">
@@ -19,7 +19,7 @@
         <div class="actions">
           <button @click="showNav = true">muros</button>
           <button @click="showBg = !showBg">fundo</button>
-          <button class="ghost" @click="showCredits = true">créditos</button>
+          <button class="outline" @click="showCredits = true">créditos</button>
         </div>
       </header>
 
@@ -39,24 +39,27 @@
         </div>
       </div>
 
-      <!-- the wall -->
-      <main class="wall" ref="wallEl" :class="{ zoomedout: zoom < 1 }" :style="{ zoom: zoom, '--z': zoom }">
-        <p class="empty" v-if="!loading && !posts.length">Muro vazio. Seja o primeiro a pichar!</p>
-        <div class="scribble"
-             v-for="p in posts" :key="p.id"
-             :class="{ fresh: p.id === freshId }"
-             :style="{
-               left: pct(p) + '%',
-               transform: 'translateX(-' + pct(p) + '%) rotate(' + p.rot + 'deg)',
-               color: p.color,
-               fontFamily: `'${p.font}', cursive`,
-               fontSize: p.size + 'px',
-               fontWeight: p.bold ? 'bold' : 'normal'
-             }">{{ p.text }}</div>
-        <div class="sentinel" ref="sentinel">
-          <button class="more" v-if="hasMore" @click="loadMore(true)">ver pichações mais antigas</button>
+      <!-- The wall is a 2D board inside a scroll area. Scribbles are absolutely positioned
+           (x = % of the free width, y = px from the top), so they never move around.
+           Zoom scales the board; the sizer gives the scroll area the scaled size. -->
+      <div class="viewport" ref="viewportEl">
+        <div class="pad">
+          <div class="sizer" :style="{ width: baseW * zoom + 'px', height: wallH * zoom + 'px' }">
+            <main class="wall" ref="wallEl"
+                  :style="{ width: baseW + 'px', height: wallH + 'px', transform: 'scale(' + zoom + ')' }">
+              <p class="empty" v-if="!loading && !posts.length && !placing">Muro vazio. Seja o primeiro a pichar!</p>
+              <div class="scribble"
+                   v-for="p in posts" :key="p.id"
+                   :class="{ fresh: p.id === freshId }"
+                   :style="scribbleStyle(p)">{{ p.text }}</div>
+              <!-- the scribble being placed: drag it, then "Fixar aqui" -->
+              <div class="scribble ghost" v-if="placing" ref="ghostEl"
+                   :class="{ dragging: draggingGhost }" :style="ghostStyle"
+                   @pointerdown="dragStart" @pointermove="dragMove" @pointerup="dragEnd" @pointercancel="dragEnd">{{ draft.text || '…' }}</div>
+            </main>
+          </div>
         </div>
-      </main>
+      </div>
 
       <!-- zoom: in is capped, out is not -->
       <div class="zoombar" role="group" aria-label="Zoom">
@@ -65,8 +68,8 @@
         <button @click="zoomBy(0.8)" title="afastar (sem limite)">&minus;</button>
       </div>
 
-      <!-- compose panel -->
-      <form class="compose" @submit.prevent="submit">
+      <!-- compose panel: "Pichar" starts placing, "Fixar aqui" saves it where you dropped it -->
+      <form class="compose" @submit.prevent="onSubmit">
         <input v-model="draft.text" :maxlength="meta.maxText" placeholder="Pichar algo neste muro…" autocomplete="off">
         <select v-model="draft.font" :style="{ fontFamily: `'${draft.font}'` }">
           <option v-for="f in meta.fonts" :key="f" :value="f" :style="{ fontFamily: `'${f}'` }">{{ f }}</option>
@@ -74,8 +77,15 @@
         <input type="color" v-model="draft.color" title="Cor">
         <input type="range" min="14" max="72" v-model.number="draft.size" title="Tamanho">
         <label class="bold"><input type="checkbox" v-model="draft.bold"> <b>B</b></label>
-        <button type="submit" :disabled="sending">Pichar</button>
-        <div class="preview" :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: Math.min(draft.size, 40) + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
+        <template v-if="!placing">
+          <button type="submit" :disabled="sending">Pichar</button>
+        </template>
+        <template v-else>
+          <button type="submit" :disabled="sending">Fixar aqui</button>
+          <button type="button" class="secondary" @click="cancelPlacing">Cancelar</button>
+        </template>
+        <div class="hint" v-if="placing">Arraste a pichação até o lugar que quiser e toque em <b>Fixar aqui</b>.</div>
+        <div class="preview" v-else :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: Math.min(draft.size, 40) + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
           {{ draft.text || 'pré-visualização' }}
         </div>
         <div class="error" v-if="error">{{ error }}</div>

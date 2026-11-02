@@ -1,5 +1,6 @@
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; background: #111; font-family: system-ui, sans-serif; overflow-x: hidden; overflow-anchor: none; }
+/* The page itself never scrolls: the wall scrolls/pans inside .viewport (see below). */
+html, body { margin: 0; height: 100%; background: #111; font-family: system-ui, sans-serif; overflow: hidden; }
 
 /* ---- texture building blocks (inline SVG noise, no image assets) ---- */
 :root {
@@ -22,7 +23,7 @@ html, body { margin: 0; min-height: 100%; background: #111; font-family: system-
 
 /* ---- wall = --wall color + texture layers on top (first layer is the topmost) ---- */
 .stage, .swatch { background-color: var(--wall, #555); }
-.stage { min-height: 100vh; padding-bottom: 170px; }
+.stage { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
 
 .tx-none { background-image: none; }
 .tx-brick {
@@ -67,7 +68,7 @@ html, body { margin: 0; min-height: 100%; background: #111; font-family: system-
 
 /* ---- top bar ---- */
 .topbar {
-  position: sticky; top: 0; z-index: 5;
+  position: relative; flex: none; z-index: 5;
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
   padding: 10px 18px; background: #000c; color: #fff; backdrop-filter: blur(4px);
 }
@@ -80,12 +81,12 @@ html, body { margin: 0; min-height: 100%; background: #111; font-family: system-
   padding: 7px 14px; cursor: pointer; font-weight: 600;
 }
 .actions button { margin-left: 6px; }
-.actions button.ghost { background: transparent; border: 1px solid #fff8; }
+.actions button.outline { background: transparent; border: 1px solid #fff8; }
 button:disabled { opacity: .5; cursor: wait; }
 
 /* ---- background picker ---- */
 .bg-picker {
-  position: sticky; top: 52px; z-index: 4;
+  position: relative; flex: none; z-index: 4;
   display: flex; flex-direction: column; gap: 8px;
   padding: 10px 18px; background: #000b; color: #fff;
 }
@@ -101,15 +102,20 @@ button:disabled { opacity: .5; cursor: wait; }
 .chip.on { background: #ff5a3c; border-color: #ff5a3c; }
 
 /* ---- wall ---- */
-/* `zoom` (set from Vue) scales the wall AND reflows it: the wall is laid out at viewport/zoom
-   width, so zooming out shows more of the wall instead of a shrunken strip. The 1100px cap is
-   divided by the zoom so it stays 1100 visual px; below 100% the cap is dropped. */
-.wall {
-  position: relative; max-width: calc(1100px / var(--z, 1)); margin: 0 auto; padding: 20px;
-  overflow-x: clip; touch-action: pan-x pan-y; /* pinch is handled by the app, not the browser */
+/* .viewport is the only thing that scrolls (both ways when zoomed in). The board (.wall) is a fixed
+   size sheet scaled with transform; .sizer reserves the scaled size so scrolling matches what you
+   see. The stage texture keeps going around the sheet, so zooming out never runs out of wall. */
+.viewport {
+  flex: 1; min-height: 0; overflow: auto; position: relative;
+  touch-action: pan-x pan-y; /* pinch is handled by the app, not the browser */
+  overscroll-behavior: contain;
 }
-.wall.zoomedout { max-width: none; }
-.sentinel { min-height: 1px; }
+.pad { padding-bottom: 200px; /* room to scroll the lowest scribbles above the compose bar */ }
+.sizer { position: relative; margin: 0 auto; }
+.wall {
+  position: absolute; left: 0; top: 0; transform-origin: 0 0;
+  box-shadow: 0 0 0 1px #ffffff2e; /* faint edge of the sheet, visible when zoomed out */
+}
 
 .zoombar {
   position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 5;
@@ -121,15 +127,22 @@ button:disabled { opacity: .5; cursor: wait; }
 }
 .zoombar button.pct { font-size: 12px; }
 .zoombar button:disabled { opacity: .35; cursor: not-allowed; }
-.empty { color: #fff; text-align: center; margin-top: 80px; font: 24px 'Permanent Marker', cursive; text-shadow: 0 2px 4px #000a; }
+.empty {
+  position: absolute; top: 80px; left: 0; right: 0; margin: 0; color: #fff; text-align: center;
+  font: 24px 'Permanent Marker', cursive; text-shadow: 0 2px 4px #000a;
+}
 .scribble {
-  position: relative; display: block; width: fit-content; max-width: 100%;
-  margin-bottom: 14px; line-height: 1.15; word-break: break-word;
-  text-shadow: 0 1px 3px #0006;
+  position: absolute; width: max-content; max-width: 100%;
+  line-height: 1.15; word-break: break-word; text-shadow: 0 1px 3px #0006;
 }
 .scribble.fresh { animation: spray .6s ease-out; }
 @keyframes spray { from { opacity: 0; filter: blur(8px); } to { opacity: 1; filter: blur(0); } }
-.more { display: block; margin: 20px auto; }
+/* the scribble being placed */
+.scribble.ghost {
+  z-index: 3; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  outline: 2px dashed #fffd; outline-offset: 8px; border-radius: 2px;
+}
+.scribble.ghost.dragging { cursor: grabbing; outline-style: solid; }
 
 /* ---- compose ---- */
 .compose {
@@ -143,6 +156,8 @@ button:disabled { opacity: .5; cursor: wait; }
 .compose .bold { cursor: pointer; user-select: none; }
 .preview { flex-basis: 100%; min-height: 36px; text-shadow: 0 1px 3px #000; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .error { flex-basis: 100%; color: #ffb4a8; }
+.hint { flex-basis: 100%; min-height: 36px; display: flex; align-items: center; font-size: 15px; }
+.compose button.secondary { background: #555; }
 
 /* ---- modal ---- */
 .modal-backdrop { position: fixed; inset: 0; z-index: 10; background: #000a; display: grid; place-items: center; }
@@ -163,5 +178,4 @@ button:disabled { opacity: .5; cursor: wait; }
   .wall-name { display: none; }
   .actions { margin-left: auto; }
   .actions button { padding: 6px 10px; margin-left: 4px; }
-  .bg-picker { top: 48px; }
 }
