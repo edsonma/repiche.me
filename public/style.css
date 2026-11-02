@@ -216,3 +216,8 @@ button:disabled { opacity: .5; cursor: wait; }
 .modal.setup .dot.on { outline: 3px solid #ff5a3c; outline-offset: 2px; }
 .modal.setup .dot.custom { display: inline-block; overflow: hidden; position: relative; background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); }
 .modal.setup .dot.custom input { opacity: 0; position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
+
+.hint { flex-wrap: wrap; gap: 6px 16px; min-height: 36px; }
+.hint .rotate { display: flex; align-items: center; gap: 8px; }
+.hint .rotate input[type=range] { width: 160px; }
+.hint .rotate output { min-width: 3.2em; text-align: right; font-variant-numeric: tabular-nums; }

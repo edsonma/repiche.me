@@ -68,7 +68,14 @@
           <button type="submit" :disabled="sending">Fixar aqui</button>
           <button type="button" class="secondary" @click="cancelPlacing">Cancelar</button>
         </template>
-        <div class="hint" v-if="placing">Arraste a pichação até o lugar que quiser e toque em <b>Fixar aqui</b>.</div>
+        <div class="hint" v-if="placing">
+          <span>Arraste a pichação até o lugar que quiser e toque em <b>Fixar aqui</b>.</span>
+          <label class="rotate">Girar
+            <input type="range" min="-180" max="180" step="1" v-model.number="placing.rot" title="Girar">
+            <output>{{ Math.round(placing.rot) }}°</output>
+            <button type="button" class="secondary" @click="placing.rot = 0" title="sem rotação">0°</button>
+          </label>
+        </div>
         <div class="preview" v-else :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: Math.min(draft.size, 40) + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
           {{ draft.text || 'pré-visualização' }}
         </div>

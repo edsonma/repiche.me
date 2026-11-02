@@ -220,7 +220,7 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
     // (x/y/rot are chosen randomly only if a client doesn't send them.)
     x: num(x) ? clamp(Math.round(x * 10) / 10, 0, 100) : Math.round(Math.random() * 100),
     y: num(y) ? clamp(Math.round(y), 0, MAX_Y) : Math.round(Math.random() * 600),
-    rot: num(rot) ? clamp(Math.round(rot * 10) / 10, -20, 20) : Math.round((Math.random() * 30 - 15) * 10) / 10,
+    rot: num(rot) ? clamp(Math.round(rot * 10) / 10, -180, 180) : Math.round((Math.random() * 30 - 15) * 10) / 10,
     createdAt: Date.now(),
   };
   wall.posts.push(post);
