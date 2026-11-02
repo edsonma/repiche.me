@@ -69,7 +69,7 @@
           <button type="button" class="secondary" @click="cancelPlacing">Cancelar</button>
         </template>
         <div class="hint" v-if="placing">
-          <span>Arraste a pichação até o lugar que quiser e toque em <b>Fixar aqui</b>.</span>
+          <span>Arraste a pichação até o lugar que quiser e toque em <b>Fixar aqui</b>. No celular, gire com dois dedos.</span>
           <label class="rotate">Girar
             <input type="range" min="-180" max="180" step="1" v-model.number="placing.rot" title="Girar">
             <output>{{ Math.round(placing.rot) }}°</output>

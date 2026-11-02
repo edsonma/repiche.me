@@ -165,11 +165,16 @@ createApp({
       setZoom(zoom.value * Math.exp(-e.deltaY * k), e.clientX, e.clientY);
     }
 
-    // two-finger pinch on touch screens
+    // two fingers on touch screens: pinch = zoom; while placing a scribble, twisting = rotate it
     let pinch = null;
     const dist = (t) => Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY);
+    const ang = (t) => Math.atan2(t[1].clientY - t[0].clientY, t[1].clientX - t[0].clientX) * 180 / Math.PI;
+    const wrap180 = (d) => ((d + 540) % 360) - 180;
     function onTouchStart(e) {
-      if (e.touches.length === 2) pinch = { d0: dist(e.touches) || 1, z0: zoom.value };
+      if (e.touches.length === 2) {
+        pinch = { d0: dist(e.touches) || 1, z0: zoom.value, a0: ang(e.touches), r0: placing.value ? placing.value.rot : 0, last: 0, rotating: false };
+        drag = null; draggingGhost.value = false; // two fingers never drag the scribble
+      }
     }
     function onTouchMove(e) {
       if (!pinch || e.touches.length !== 2) return;
@@ -177,6 +182,16 @@ createApp({
       const cx = (e.touches[0].clientX + e.touches[1].clientX) / 2;
       const cy = (e.touches[0].clientY + e.touches[1].clientY) / 2;
       setZoom(pinch.z0 * (dist(e.touches) / pinch.d0), cx, cy);
+      if (placing.value) {
+        // accumulate the twist in small steps so crossing +-180 doesn't jump
+        const a = ang(e.touches);
+        pinch.last += wrap180(a - (pinch.prevA === undefined ? pinch.a0 : pinch.prevA));
+        pinch.prevA = a;
+        if (pinch.rotating || Math.abs(pinch.last) > 6) { // small dead zone: a plain pinch doesn't twist
+          pinch.rotating = true;
+          placing.value.rot = clamp(Math.round(wrap180(pinch.r0 + pinch.last)), -180, 180);
+        }
+      }
     }
     function onTouchEnd(e) { if (e.touches.length < 2) pinch = null; }
     const stopGesture = (e) => e.preventDefault(); // iOS Safari page pinch
@@ -203,7 +218,7 @@ createApp({
 
     let drag = null;
     function dragStart(e) {
-      if (!placing.value || (e.pointerType === 'mouse' && e.button !== 0)) return;
+      if (!placing.value || pinch || drag || (e.pointerType === 'mouse' && e.button !== 0)) return;
       e.preventDefault();
       const g = ghostEl.value;
       g.setPointerCapture(e.pointerId);
@@ -213,7 +228,7 @@ createApp({
       draggingGhost.value = true;
     }
     function dragMove(e) {
-      if (!drag || !placing.value) return;
+      if (!drag || !placing.value || pinch) return;
       // nudge the scroll area when the pointer is near its edge (long walls, zoomed in)
       const v = viewportEl.value, vr = v.getBoundingClientRect(), edge = 48;
       if (e.clientY < vr.top + edge) v.scrollTop -= 14;
