@@ -85,17 +85,21 @@
               <input v-model="setupName" @input="cleanSetupName" maxlength="30" placeholder="nome-do-muro" autocomplete="off">
             </span>
           </label>
-          <div class="row">
-            <button type="button" v-for="(p, name) in meta.presets" :key="name"
-                    class="swatch" :class="['tx-' + p.texture, { on: isPreset(p) }]"
-                    :style="{ '--wall': p.color }" :title="name" @click="applyBackground(p)"></button>
+          <div class="step">1. Superfície</div>
+          <div class="tiles">
+            <button type="button" v-for="t in meta.textures" :key="t.id" class="tile"
+                    :class="{ on: background.texture === t.id }" @click="setTexture(t.id)">
+              <span class="thumb" :class="'tx-' + t.id" :style="{ '--wall': background.color }"></span>
+              <span class="lbl">{{ t.label }}</span>
+            </button>
           </div>
-          <div class="row">
-            <label class="colorpick">cor
+          <div class="step">2. Cor</div>
+          <div class="dots">
+            <button type="button" v-for="c in palette" :key="c" class="dot" :aria-label="c"
+                    :class="{ on: background.color === c }" :style="{ background: c }" @click="setColor(c)"></button>
+            <label class="dot custom" title="outra cor" :class="{ on: !palette.includes(background.color) }">
               <input type="color" :value="background.color" @input="setColor($event.target.value)">
             </label>
-            <button type="button" v-for="t in meta.textures" :key="t.id" class="chip"
-                    :class="{ on: background.texture === t.id }" @click="setTexture(t.id)">{{ t.label }}</button>
           </div>
           <p class="err" v-if="setupError">{{ setupError }}
             <a v-if="existsName" :href="'/' + existsName" @click.prevent="go(existsName)">Entrar em /{{ existsName }}</a>

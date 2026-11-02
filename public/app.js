@@ -43,6 +43,7 @@ createApp({
     const setupError = ref('');
     const existsName = ref('');
     const creating = ref(false);
+    const palette = ['#8b3a2b', '#7d7d7d', '#7a5230', '#10173a', '#f1ebd8', '#2c2c30', '#2b6cb0', '#2e7d4f', '#b8860b', '#6b2f7a', '#c2185b', '#e6e6e6'];
     const showSetup = computed(() =>
       !loading.value && !wallSetup.value && posts.value.length === 0 && !setupDismissed.value);
     let poll = null;
@@ -345,7 +346,7 @@ createApp({
       slug, background, posts, total, loading, sending, error, freshId,
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
-      showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
+      palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,
       applyBackground, setColor, setTexture, isPreset, go, goCustom,
