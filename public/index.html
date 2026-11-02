@@ -40,7 +40,7 @@
       </div>
 
       <!-- the wall -->
-      <main class="wall">
+      <main class="wall" ref="wallEl" :class="{ zoomedout: zoom < 1 }" :style="{ zoom: zoom, '--z': zoom }">
         <p class="empty" v-if="!loading && !posts.length">Muro vazio. Seja o primeiro a pichar!</p>
         <div class="scribble"
              v-for="p in posts" :key="p.id"
@@ -53,8 +53,17 @@
                fontSize: p.size + 'px',
                fontWeight: p.bold ? 'bold' : 'normal'
              }">{{ p.text }}</div>
-        <button class="more" v-if="hasMore" @click="loadMore">ver pichações mais antigas</button>
+        <div class="sentinel" ref="sentinel">
+          <button class="more" v-if="hasMore" @click="loadMore(true)">ver pichações mais antigas</button>
+        </div>
       </main>
+
+      <!-- zoom: in is capped, out is not -->
+      <div class="zoombar" role="group" aria-label="Zoom">
+        <button :disabled="zoom >= ZOOM_MAX" @click="zoomBy(1.25)" :title="'aproximar (máx. ' + ZOOM_MAX * 100 + '%)'">+</button>
+        <button class="pct" @click="setZoom(1)" title="voltar a 100%">{{ zoomLabel }}</button>
+        <button @click="zoomBy(0.8)" title="afastar (sem limite)">&minus;</button>
+      </div>
 
       <!-- compose panel -->
       <form class="compose" @submit.prevent="submit">
@@ -101,6 +110,7 @@
             <li><b>Túlio Ornelas</b>, engenheiro de software e um dos fundadores. A ideia surgiu ao assistir a um documentário sobre a queda do Muro de Berlim.</li>
             <li><b>Wesley Rocha</b>, designer de interfaces da equipe.</li>
           </ul>
+          <p>Também fizeram parte da equipe: <b>Renan</b>, <b>Karina Varelas</b> e <b>Rodrigo Ramalho</b>.</p>
           <h3>Referências</h3>
           <ul>
             <li><a href="https://deriva-telar.fau.usp.br/piche-me/" target="_blank" rel="noopener noreferrer">piche.me (2011-2015)</a>, por Caroline Speridião, projeto deriva~telar (FAU-USP)</li>

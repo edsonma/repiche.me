@@ -1,5 +1,5 @@
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; background: #111; font-family: system-ui, sans-serif; overflow-x: hidden; }
+html, body { margin: 0; min-height: 100%; background: #111; font-family: system-ui, sans-serif; overflow-x: hidden; overflow-anchor: none; }
 
 /* ---- texture building blocks (inline SVG noise, no image assets) ---- */
 :root {
@@ -101,7 +101,26 @@ button:disabled { opacity: .5; cursor: wait; }
 .chip.on { background: #ff5a3c; border-color: #ff5a3c; }
 
 /* ---- wall ---- */
-.wall { position: relative; max-width: 1100px; margin: 0 auto; padding: 20px; overflow-x: clip; }
+/* `zoom` (set from Vue) scales the wall AND reflows it: the wall is laid out at viewport/zoom
+   width, so zooming out shows more of the wall instead of a shrunken strip. The 1100px cap is
+   divided by the zoom so it stays 1100 visual px; below 100% the cap is dropped. */
+.wall {
+  position: relative; max-width: calc(1100px / var(--z, 1)); margin: 0 auto; padding: 20px;
+  overflow-x: clip; touch-action: pan-x pan-y; /* pinch is handled by the app, not the browser */
+}
+.wall.zoomedout { max-width: none; }
+.sentinel { min-height: 1px; }
+
+.zoombar {
+  position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 5;
+  display: flex; flex-direction: column; gap: 6px; opacity: .9;
+}
+.zoombar button {
+  width: 44px; height: 44px; border: 1px solid #fff6; border-radius: 10px;
+  background: #000b; color: #fff; font: 600 22px system-ui, sans-serif; cursor: pointer; padding: 0;
+}
+.zoombar button.pct { font-size: 12px; }
+.zoombar button:disabled { opacity: .35; cursor: not-allowed; }
 .empty { color: #fff; text-align: center; margin-top: 80px; font: 24px 'Permanent Marker', cursive; text-shadow: 0 2px 4px #000a; }
 .scribble {
   position: relative; display: block; width: fit-content; max-width: 100%;
