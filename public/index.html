@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>piche.me (clone)</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Permanent+Marker&family=Rock+Salt&family=Special+Elite&family=Londrina+Solid&family=Pacifico&family=Bangers&family=Caveat&family=Creepster&family=Fredericka+the+Great&family=Press+Start+2P&family=Shadows+Into+Light&family=Indie+Flower&display=swap">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div id="app" :class="'bg-' + background">
+    <header class="topbar">
+      <a class="logo" href="/" @click.prevent="go('home')">piche<span>.me</span></a>
+      <div class="wall-name">/{{ slug }} <small v-if="total">({{ total }} pichações)</small></div>
+      <div class="actions">
+        <button @click="showNav = true">muros</button>
+        <button @click="showBg = !showBg">fundo</button>
+      </div>
+    </header>
+
+    <!-- background picker -->
+    <div class="bg-picker" v-if="showBg">
+      <button v-for="b in meta.backgrounds" :key="b" :class="['swatch', 'bg-' + b]" @click="setBackground(b)" :title="b"></button>
+    </div>
+
+    <!-- the wall -->
+    <main class="wall">
+      <p class="empty" v-if="!loading && !posts.length">Muro vazio. Seja o primeiro a pichar!</p>
+      <div class="scribble"
+           v-for="p in posts" :key="p.id"
+           :class="{ fresh: p.id === freshId }"
+           :style="{
+             left: p.x + '%',
+             transform: 'rotate(' + p.rot + 'deg)',
+             color: p.color,
+             fontFamily: `'${p.font}', cursive`,
+             fontSize: p.size + 'px',
+             fontWeight: p.bold ? 'bold' : 'normal'
+           }">{{ p.text }}</div>
+      <button class="more" v-if="hasMore" @click="loadMore">ver pichações mais antigas</button>
+    </main>
+
+    <!-- compose panel -->
+    <form class="compose" @submit.prevent="submit">
+      <input v-model="draft.text" :maxlength="meta.maxText" placeholder="Pichar algo neste muro…" autocomplete="off">
+      <select v-model="draft.font" :style="{ fontFamily: `'${draft.font}'` }">
+        <option v-for="f in meta.fonts" :key="f" :value="f" :style="{ fontFamily: `'${f}'` }">{{ f }}</option>
+      </select>
+      <input type="color" v-model="draft.color" title="Cor">
+      <input type="range" min="14" max="72" v-model.number="draft.size" title="Tamanho">
+      <label class="bold"><input type="checkbox" v-model="draft.bold"> <b>B</b></label>
+      <button type="submit" :disabled="sending">Pichar</button>
+      <div class="preview" :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: Math.min(draft.size, 40) + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
+        {{ draft.text || 'pré-visualização' }}
+      </div>
+      <div class="error" v-if="error">{{ error }}</div>
+    </form>
+
+    <!-- wall navigation modal -->
+    <div class="modal-backdrop" v-if="showNav" @click.self="showNav = false">
+      <div class="modal">
+        <h2>Criar ou visitar um muro</h2>
+        <form @submit.prevent="goCustom">
+          <span>piche.me/</span><input v-model="newSlug" placeholder="nome-do-muro" maxlength="30">
+          <button>ir</button>
+        </form>
+        <h3>Muros recentes</h3>
+        <ul>
+          <li v-for="w in walls" :key="w.slug">
+            <a :href="'/' + w.slug" @click.prevent="go(w.slug)">/{{ w.slug }}</a> <small>{{ w.count }} pichações</small>
+          </li>
+        </ul>
+        <button class="close" @click="showNav = false">fechar</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/vendor/vue.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

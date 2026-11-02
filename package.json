@@ -1,0 +1,14 @@
+{
+  "name": "piche-clone",
+  "version": "0.1.0",
+  "description": "Draft clone of piche.me: anonymous virtual walls you can scribble on (Express + Vue 3)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "vue": "^3.4.0"
+  }
+}
