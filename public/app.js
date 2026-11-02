@@ -5,7 +5,8 @@ createApp({
     const slugFromPath = () => decodeURIComponent(location.pathname.slice(1)).toLowerCase() || 'home';
 
     const slug = ref(slugFromPath());
-    const background = ref('brick');
+    // neutral until the wall's real background arrives (avoids a flash of the wrong color)
+    const background = ref({ color: '#1c1c1e', texture: 'none' });
     const posts = ref([]);
     const total = ref(0);
     const hasMore = ref(false);
@@ -13,13 +14,21 @@ createApp({
     const sending = ref(false);
     const error = ref('');
     const freshId = ref(null);
-    const meta = reactive({ fonts: ['Permanent Marker'], backgrounds: ['brick'], maxText: 140 });
+    const meta = reactive({ fonts: ['Permanent Marker'], textures: [], presets: {}, maxText: 140 });
     const draft = reactive({ text: '', font: 'Permanent Marker', color: '#ffffff', size: 28, bold: false });
     const showNav = ref(false);
     const showBg = ref(false);
+    const showCredits = ref(false);
     const walls = ref([]);
     const newSlug = ref('');
     let poll = null;
+
+    // Background save state. A poll response that was requested before the latest local
+    // change (or while a save is pending) must not overwrite what the user just picked.
+    let bgVersion = 0;
+    let bgTimer = null;
+    let bgSaving = false;
+    let bgSlug = null;
 
     async function api(url, opts) {
       const res = await fetch(url, opts);
@@ -27,6 +36,13 @@ createApp({
       if (!res.ok) throw new Error(data.error || 'Erro inesperado');
       return data;
     }
+
+    // Horizontal spot as 0-100. `left: N%` + `translateX(-N%)` places the scribble at N% of the
+    // free space, so it always stays fully inside the wall (no sideways scrolling on phones).
+    // Stored x is 0-70 from the server.
+    const pct = (p) => Math.min(100, Math.max(0, Math.round(p.x / 0.7)));
+
+    const sameBg = (a, b) => a && b && a.color === b.color && a.texture === b.texture;
 
     async function loadWall() {
       loading.value = true;
@@ -36,7 +52,7 @@ createApp({
         posts.value = w.posts;
         total.value = w.total;
         hasMore.value = w.hasMore;
-        document.title = `/${slug.value} · piche.me (clone)`;
+        document.title = `/${slug.value} · repiche.me`;
       } catch (e) {
         error.value = e.message;
       } finally {
@@ -47,13 +63,15 @@ createApp({
     // Pull in posts other people made since we last looked.
     async function refresh() {
       if (loading.value || sending.value) return;
+      const versionAtRequest = bgVersion;
       try {
         const w = await api(`/api/walls/${encodeURIComponent(slug.value)}`);
         const known = new Set(posts.value.map((p) => p.id));
         const incoming = w.posts.filter((p) => !known.has(p.id));
         if (incoming.length) posts.value = [...incoming, ...posts.value];
         total.value = w.total;
-        background.value = w.background;
+        const bgBusy = bgTimer !== null || bgSaving || versionAtRequest !== bgVersion;
+        if (!bgBusy && !sameBg(background.value, w.background)) background.value = w.background;
       } catch { /* ignore transient errors */ }
     }
 
@@ -87,16 +105,32 @@ createApp({
       }
     }
 
-    async function setBackground(b) {
+    // ---- background: change locally right away, save (debounced) to the wall ----
+    function applyBackground(bg) {
+      background.value = { color: bg.color, texture: bg.texture };
+      bgVersion++;
+      bgSlug = slug.value;
+      clearTimeout(bgTimer);
+      bgTimer = setTimeout(saveBackground, 350);
+    }
+    const setColor = (color) => applyBackground({ color, texture: background.value.texture });
+    const setTexture = (texture) => applyBackground({ color: background.value.color, texture });
+    const isPreset = (p) => sameBg(background.value, p);
+
+    async function saveBackground() {
+      bgTimer = null;
+      bgSaving = true;
+      const bg = { ...background.value };
       try {
-        await api(`/api/walls/${encodeURIComponent(slug.value)}/background`, {
+        await api(`/api/walls/${encodeURIComponent(bgSlug)}/background`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ background: b }),
+          body: JSON.stringify(bg),
         });
-        background.value = b;
       } catch (e) {
         error.value = e.message;
+      } finally {
+        bgSaving = false;
       }
     }
 
@@ -131,8 +165,8 @@ createApp({
 
     return {
       slug, background, posts, total, hasMore, loading, sending, error, freshId,
-      meta, draft, showNav, showBg, walls, newSlug,
-      submit, loadMore, setBackground, go, goCustom,
+      meta, draft, showNav, showBg, showCredits, walls, newSlug,
+      pct, submit, loadMore, applyBackground, setColor, setTexture, isPreset, go, goCustom,
     };
   },
 }).mount('#app');

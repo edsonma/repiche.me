@@ -27,7 +27,8 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 
 - Anonymous walls by URL, scribbles with chosen font, color, size and weight
 - Random but persistent position/rotation per scribble
-- 6 CSS-only wall backgrounds
+- Textured wall backgrounds: 9 presets, or any color + one of 8 textures (brick, concrete, wood, paper, grunge, tiles, metal, plain), drawn with CSS/SVG (no image files)
+- Credits button with the original piche.me creators and references
 - Recent walls modal, live polling, pagination of older scribbles
 - Whitelisted fonts/colors, 140-char limit, per-IP rate limit
 

@@ -1,31 +1,74 @@
 * { box-sizing: border-box; }
-html, body { margin: 0; min-height: 100%; font-family: system-ui, sans-serif; }
+html, body { margin: 0; min-height: 100%; background: #111; font-family: system-ui, sans-serif; overflow-x: hidden; }
 
-/* ---- wall backgrounds (pure CSS, no image assets) ---- */
-#app { min-height: 100vh; padding-bottom: 170px; transition: background .3s; }
-.bg-brick {
-  background-color: #8b3a2b;
+/* ---- texture building blocks (inline SVG noise, no image assets) ---- */
+:root {
+  /* dark speckle */
+  --grain-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' seed='1' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.3 0 0 0 -.45'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  /* light speckle */
+  --grain-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' seed='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1.3 0 0 0 -.65'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  /* very soft dark speckle (paper) */
+  --grain-soft: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='220' height='220'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1 0 0 0 -.36'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  /* large dirty stains, dark and light */
+  --blotch-dark: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008' numOctaves='4' seed='5' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.8 0 0 0 -.7'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  --blotch-light: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='600' height='600'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.008' numOctaves='4' seed='9' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1.8 0 0 0 -.8'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  /* vertical wood grain */
+  --wood-grain: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9 .018' numOctaves='2' seed='4' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 1.6 0 0 0 -.62'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  /* horizontal brushed-metal streaks */
+  --brush: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='300' height='300'%3E%3Cfilter id='f' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.004 .9' numOctaves='2' seed='6' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 1.5 0 0 0 -.62'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23f)'/%3E%3C/svg%3E");
+  /* running-bond brick tile: mortar lines + per-brick tone */
+  --brick-tile: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='80'%3E%3Crect width='60' height='40' fill='rgba(255,255,255,.07)'/%3E%3Crect x='30' y='40' width='60' height='40' fill='rgba(0,0,0,.10)'/%3E%3Crect x='90' y='0' width='30' height='40' fill='rgba(0,0,0,.06)'/%3E%3Cg stroke='rgba(0,0,0,.38)' stroke-width='3' fill='none'%3E%3Cpath d='M0 1.5H120M0 41.5H120M0 0V40M60 0V40M120 0V40M30 40V80M90 40V80'/%3E%3C/g%3E%3C/svg%3E");
+}
+
+/* ---- wall = --wall color + texture layers on top (first layer is the topmost) ---- */
+.stage, .swatch { background-color: var(--wall, #555); }
+.stage { min-height: 100vh; padding-bottom: 170px; }
+
+.tx-none { background-image: none; }
+.tx-brick {
+  background-image: var(--grain-dark), var(--brick-tile);
+  background-size: 220px 220px, 120px 80px;
+}
+.tx-concrete {
+  background-image: var(--grain-dark), var(--grain-light), var(--blotch-dark), var(--blotch-light);
+  background-size: 220px 220px, 220px 220px, 600px 600px, 600px 600px;
+  background-position: 0 0, 90px 60px, 0 0, 200px 120px;
+}
+.tx-wood {
   background-image:
-    linear-gradient(#0003 2px, transparent 2px),
-    linear-gradient(90deg, #0003 2px, transparent 2px);
-  background-size: 120px 40px, 60px 40px;
+    repeating-linear-gradient(90deg, rgba(0,0,0,.42) 0 2px, transparent 2px 110px),
+    repeating-linear-gradient(90deg, rgba(255,255,255,.05) 0 110px, rgba(0,0,0,.06) 110px 220px),
+    var(--wood-grain);
+  background-size: auto, auto, 300px 300px;
 }
-.bg-concrete { background: radial-gradient(circle at 30% 20%, #8d8d8d, #5f5f5f 80%); }
-.bg-wood {
-  background-color: #7a5230;
-  background-image: repeating-linear-gradient(90deg, #0002 0 2px, transparent 2px 90px);
+.tx-paper {
+  background-image: var(--grain-soft), radial-gradient(ellipse at 50% 30%, transparent 55%, rgba(0,0,0,.14));
+  background-size: 220px 220px, auto;
 }
-.bg-night { background: linear-gradient(#0a0f2c, #1c2b5a); }
-.bg-paper { background: #f4efe1; }
-.bg-berlin {
-  background-color: #b9b9b4;
-  background-image: repeating-linear-gradient(0deg, #0001 0 1px, transparent 1px 160px);
+.tx-grunge {
+  background-image: var(--grain-dark), var(--blotch-dark), var(--blotch-light);
+  background-size: 220px 220px, 600px 600px, 600px 600px;
+  background-position: 0 0, 0 0, 260px 180px;
+}
+.tx-tiles {
+  background-image:
+    var(--grain-soft),
+    linear-gradient(rgba(255,255,255,.45) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(255,255,255,.45) 2px, transparent 2px),
+    radial-gradient(circle at 30% 28%, rgba(255,255,255,.22), transparent 62%);
+  background-size: 220px 220px, 64px 64px, 64px 64px, 64px 64px;
+}
+.tx-metal {
+  background-image:
+    var(--brush),
+    linear-gradient(115deg, rgba(255,255,255,.24) 0, transparent 30%, rgba(0,0,0,.2) 60%, rgba(255,255,255,.14) 100%);
+  background-size: 300px 300px, auto;
 }
 
 /* ---- top bar ---- */
 .topbar {
   position: sticky; top: 0; z-index: 5;
-  display: flex; align-items: center; gap: 16px;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px;
   padding: 10px 18px; background: #000c; color: #fff; backdrop-filter: blur(4px);
 }
 .logo { color: #fff; text-decoration: none; font: 700 22px 'Permanent Marker', cursive; }
@@ -37,16 +80,31 @@ html, body { margin: 0; min-height: 100%; font-family: system-ui, sans-serif; }
   padding: 7px 14px; cursor: pointer; font-weight: 600;
 }
 .actions button { margin-left: 6px; }
+.actions button.ghost { background: transparent; border: 1px solid #fff8; }
 button:disabled { opacity: .5; cursor: wait; }
 
-.bg-picker { position: sticky; top: 46px; z-index: 4; display: flex; gap: 8px; padding: 8px 18px; background: #000a; }
-.swatch { width: 38px; height: 38px; border: 2px solid #fff; border-radius: 6px; cursor: pointer; padding: 0; }
+/* ---- background picker ---- */
+.bg-picker {
+  position: sticky; top: 52px; z-index: 4;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 10px 18px; background: #000b; color: #fff;
+}
+.bg-picker .row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.swatch { width: 44px; height: 44px; border: 2px solid #fff8; border-radius: 6px; cursor: pointer; padding: 0; }
+.swatch.on { border-color: #fff; outline: 2px solid #ff5a3c; }
+.colorpick { display: flex; align-items: center; gap: 6px; }
+.colorpick input { width: 44px; height: 32px; border: 0; padding: 0; background: none; cursor: pointer; }
+.chip {
+  background: #fff2; color: #fff; border: 1px solid #fff5; border-radius: 999px;
+  padding: 5px 12px; cursor: pointer; font-size: 14px;
+}
+.chip.on { background: #ff5a3c; border-color: #ff5a3c; }
 
 /* ---- wall ---- */
-.wall { position: relative; max-width: 1100px; margin: 0 auto; padding: 20px; }
+.wall { position: relative; max-width: 1100px; margin: 0 auto; padding: 20px; overflow-x: clip; }
 .empty { color: #fff; text-align: center; margin-top: 80px; font: 24px 'Permanent Marker', cursive; text-shadow: 0 2px 4px #000a; }
 .scribble {
-  position: relative; display: block; width: fit-content; max-width: 90%;
+  position: relative; display: block; width: fit-content; max-width: 100%;
   margin-bottom: 14px; line-height: 1.15; word-break: break-word;
   text-shadow: 0 1px 3px #0006;
 }
@@ -75,8 +133,16 @@ button:disabled { opacity: .5; cursor: wait; }
 .modal form input { flex: 1; padding: 8px; }
 .modal ul { padding-left: 18px; }
 .modal .close { margin-top: 12px; background: #444; }
+.modal.credits { width: min(540px, 92vw); line-height: 1.45; }
+.modal.credits h3 { margin-top: 18px; font-size: 16px; }
+.modal.credits a { color: #c2370f; }
+.modal.credits li { margin-bottom: 6px; }
+.modal.credits .note { font-size: 13px; color: #666; }
 
 @media (max-width: 600px) {
   .compose select { max-width: 120px; }
   .wall-name { display: none; }
+  .actions { margin-left: auto; }
+  .actions button { padding: 6px 10px; margin-left: 4px; }
+  .bg-picker { top: 48px; }
 }

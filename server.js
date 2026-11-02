@@ -18,9 +18,40 @@ const FONTS = [
   'Pacifico', 'Bangers', 'Caveat', 'Creepster', 'Fredericka the Great',
   'Press Start 2P', 'Shadows Into Light', 'Indie Flower',
 ];
-const BACKGROUNDS = ['brick', 'concrete', 'wood', 'night', 'paper', 'berlin'];
+// A wall background is { color: '#rrggbb', texture: <id> }; textures are drawn client-side over the color.
+const TEXTURES = [
+  { id: 'none', label: 'lisa' },
+  { id: 'brick', label: 'tijolo' },
+  { id: 'concrete', label: 'concreto' },
+  { id: 'wood', label: 'madeira' },
+  { id: 'paper', label: 'papel' },
+  { id: 'grunge', label: 'grunge' },
+  { id: 'tiles', label: 'azulejo' },
+  { id: 'metal', label: 'metal' },
+];
+const TEXTURE_IDS = TEXTURES.map((t) => t.id);
+const PRESETS = {
+  brick: { color: '#8b3a2b', texture: 'brick' },
+  concrete: { color: '#7d7d7d', texture: 'concrete' },
+  wood: { color: '#7a5230', texture: 'wood' },
+  night: { color: '#10173a', texture: 'grunge' },
+  paper: { color: '#f1ebd8', texture: 'paper' },
+  berlin: { color: '#b9b9b4', texture: 'grunge' },
+  asphalt: { color: '#2c2c30', texture: 'concrete' },
+  azulejo: { color: '#2b6cb0', texture: 'tiles' },
+  metal: { color: '#8a8f98', texture: 'metal' },
+};
 const SLUG_RE = /^[a-z0-9_-]{1,30}$/;
 const COLOR_RE = /^#[0-9a-fA-F]{6}$/;
+
+// Accepts a preset name (legacy walls stored 'brick', 'night', ...) or { color, texture }.
+function normalizeBackground(b) {
+  if (typeof b === 'string' && PRESETS[b]) return { ...PRESETS[b] };
+  if (b && typeof b === 'object' && COLOR_RE.test(b.color) && TEXTURE_IDS.includes(b.texture)) {
+    return { color: b.color.toLowerCase(), texture: b.texture };
+  }
+  return null;
+}
 
 // ---- Tiny JSON "database" ------------------------------------------------
 let db = { walls: {} };
@@ -28,6 +59,11 @@ try {
   db = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
 } catch {
   fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
+}
+// migrate walls saved with the old string backgrounds
+if (!db.walls) db.walls = {};
+for (const w of Object.values(db.walls)) {
+  w.background = normalizeBackground(w.background) || { ...PRESETS.brick };
 }
 
 let saveTimer = null;
@@ -50,7 +86,7 @@ function save() {
 
 function getWall(slug, create = false) {
   if (!db.walls[slug] && create) {
-    db.walls[slug] = { slug, background: 'brick', createdAt: Date.now(), posts: [] };
+    db.walls[slug] = { slug, background: { ...PRESETS.brick }, createdAt: Date.now(), posts: [] };
     save();
   }
   return db.walls[slug];
@@ -78,7 +114,9 @@ app.use('/vendor/vue.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/vue/dist/vue.global.prod.js'))
 );
 
-app.get('/api/meta', (req, res) => res.json({ fonts: FONTS, backgrounds: BACKGROUNDS, maxText: MAX_TEXT }));
+app.get('/api/meta', (req, res) =>
+  res.json({ fonts: FONTS, textures: TEXTURES, presets: PRESETS, maxText: MAX_TEXT })
+);
 
 // Recently active walls (for the navigation modal)
 app.get('/api/walls', (req, res) => {
@@ -117,9 +155,11 @@ app.get('/api/walls/:slug', (req, res) => {
 app.post('/api/walls/:slug/background', (req, res) => {
   const slug = req.params.slug.toLowerCase();
   if (!SLUG_RE.test(slug)) return res.status(400).json({ error: 'Nome de muro inválido.' });
-  if (!BACKGROUNDS.includes(req.body.background)) return res.status(400).json({ error: 'Fundo inválido.' });
+  const body = req.body || {};
+  const bg = normalizeBackground(body.background !== undefined ? body.background : body);
+  if (!bg) return res.status(400).json({ error: 'Fundo inválido.' });
   const wall = getWall(slug, true);
-  wall.background = req.body.background;
+  wall.background = bg;
   save();
   res.json({ background: wall.background });
 });
@@ -160,7 +200,7 @@ app.get('/:slug', (req, res) => res.sendFile(path.join(__dirname, 'public', 'ind
 app.get('/', (req, res) => res.sendFile(path.join(__dirname, 'public', 'index.html')));
 
 const server = app.listen(PORT, '0.0.0.0', () =>
-  console.log(`piche clone running on port ${PORT}, data in ${DATA_FILE}`)
+  console.log(`repiche.me running on port ${PORT}, data in ${DATA_FILE}`)
 );
 
 // Railway sends SIGTERM on redeploy: write pending changes before exiting.
