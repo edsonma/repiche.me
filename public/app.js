@@ -282,8 +282,9 @@ createApp({
         if (name === slug.value) wallSetup.value = true; // same URL: just close the popup
         else go(name);                                    // new name: open that wall
       } catch (e) {
-        setupError.value = e.message;
-        if (/já existe/.test(e.message)) existsName.value = name;
+        // that wall already exists: don't make the person read an error, just take them there
+        if (/já existe/.test(e.message)) go(name);
+        else setupError.value = e.message;
       } finally {
         creating.value = false;
       }
