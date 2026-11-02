@@ -3,10 +3,9 @@ const { createApp, reactive, ref, computed, onMounted, onBeforeUnmount } = Vue;
 // Zoom: in is capped, out is not (the floor only keeps the scale a valid, positive number).
 const ZOOM_MAX = 3;
 const ZOOM_MIN = 0.001;
-// Board width in px at 100%. Fixed (not tied to the screen) so every device sees the same wall:
-// wide on purpose, so you scroll sideways, but bounded so it never gets lost. 2400 is about two
-// desktop screens or six phone screens; change this one number to make the wall narrower/wider.
-const WALL_W = 2400;
+// Board width in px at 100%: very wide on purpose (scroll sideways) but bounded. The real value
+// lives in server.js (WALL_W) and arrives with /api/meta; this is only the default until it loads.
+const WALL_W = 10080;
 const MAX_Y = 20000;     // keep in sync with server.js
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
@@ -55,7 +54,7 @@ createApp({
         viewer3d = await mod.open3D({
           posts: posts.value.map((p) => ({ ...p })),
           background: { ...background.value },
-          wallW: WALL_W, wallH: wallH.value, fonts: meta.fonts || [],
+          wallW: baseW.value, wallH: wallH.value, fonts: meta.fonts || [],
           onClose: () => { viewer3d = null; },
         });
       } catch (e) {
@@ -81,7 +80,7 @@ createApp({
     const sameBg = (a, b) => a && b && a.color === b.color && a.texture === b.texture;
 
     // ---- board geometry (the board is WALL_W wide at zoom 1; the viewport scrolls over it) ----
-    const baseW = computed(() => WALL_W);
+    const baseW = computed(() => meta.wallWidth || WALL_W);
     const wallH = computed(() => {
       let bottom = 0;
       for (const p of posts.value) bottom = Math.max(bottom, p.y + p.size * 1.4);

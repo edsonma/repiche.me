@@ -234,3 +234,6 @@ button:disabled { opacity: .5; cursor: wait; }
 .v3d-pad button { height: 44px; border: 1px solid #fff6; border-radius: 10px; background: #000a; color: #fff; font-size: 18px; cursor: pointer; touch-action: none; padding: 0; }
 .v3d-pad [data-k=up] { grid-area: u; } .v3d-pad [data-k=left] { grid-area: l; } .v3d-pad [data-k=right] { grid-area: r; } .v3d-pad [data-k=down] { grid-area: d; }
 @media (max-width: 520px) { .v3d-hint { max-width: calc(100% - 24px); bottom: 190px; } }
+.v3d.locked::after { content: '+'; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); color: #fff; font: 700 26px system-ui, sans-serif; text-shadow: 0 0 3px #000; pointer-events: none; mix-blend-mode: difference; }
+.v3d.locked .v3d-hint { opacity: .0; transition: opacity .4s; }
+.v3d-hint b { color: #ffd400; }

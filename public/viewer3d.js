@@ -13,16 +13,17 @@ const MAX_H_PX = 1400;      // tallest part of the board shown in 3D (7 m)
 const MIN_H_PX = 700;
 const THICK = 0.4;          // wall thickness (m)
 const EYE = 1.6;            // eye height (m)
-const Z_MIN = THICK / 2 + 1.1, Z_MAX = 9;   // how near / far you can stand (always in front of the wall)
-const YAW_MAX = 1.35, PITCH_MAX = 0.9;      // you can look around a bit, never turn your back
+const Z_MIN = THICK / 2 + 1.1, Z_MAX = 13;  // how near / far you can stand (always in front of the wall)
+const PITCH_MAX = 1.5;                       // free look like Minecraft; only walking is limited
+const SEG_PX = 3360;                         // the wall is built from segments so each texture stays sharp
 const SPEED = 3;            // m/s
 
 // ---------- tiny seeded RNG so textures are the same every time ----------
 function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
 // ---------- procedural wall textures drawn over the wall color (canvas 2D, no image files) ----------
-function paintSurface(ctx, W, H, texture, color) {
-  const r = rng(7);
+function paintSurface(ctx, W, H, texture, color, seed = 7) {
+  const r = rng(seed);
   ctx.fillStyle = color; ctx.fillRect(0, 0, W, H);
   const grain = (n, a, light) => {
     for (let i = 0; i < n; i++) {
@@ -93,7 +94,7 @@ function wrapLines(ctx, text, maxW) {
   if (cur) lines.push(cur);
   return lines;
 }
-function paintScribbles(ctx, posts, boardW, boardH) {
+function paintScribbles(ctx, posts, boardW, boardH, x0 = -1e9, x1 = 1e9) {
   ctx.textBaseline = 'top';
   for (const p of posts) {
     if (p.y > boardH) continue;
@@ -104,6 +105,7 @@ function paintScribbles(ctx, posts, boardW, boardH) {
     const bw = Math.max(...lines.map((l) => ctx.measureText(l).width));
     const bh = lh * lines.length;
     const left = (p.x / 100) * (boardW - bw);
+    if (left + bw + fs < x0 || left - fs > x1) continue; // not on this segment
     ctx.save();
     ctx.translate(left + bw / 2, p.y + bh / 2);
     ctx.rotate((p.rot * Math.PI) / 180);
@@ -150,7 +152,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   root.innerHTML = `
     <div class="v3d-msg">Carregando o muro…</div>
     <button class="v3d-close" aria-label="Sair do 3D" title="Sair (Esc)">✕</button>
-    <div class="v3d-hint">${isTouch ? 'Arraste para olhar · use os botões para andar' : 'Arraste para olhar · A/D ou ←/→ andam ao longo do muro · W/S ou ↑/↓ chegam perto/longe'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
+    <div class="v3d-hint">${isTouch ? 'Arraste para olhar · use os botões para andar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
     <div class="v3d-pad" aria-label="Andar">
       <button data-k="up">▲</button><button data-k="left">◀</button><button data-k="down">▼</button><button data-k="right">▶</button>
     </div>`;
@@ -219,7 +221,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   sun.castShadow = true;
   const ss = isTouch ? 1024 : 2048;
   sun.shadow.mapSize.set(ss, ss);
-  const sc = sun.shadow.camera; sc.left = -Wm / 2 - 6; sc.right = Wm / 2 + 6; sc.top = 14; sc.bottom = -14; sc.near = 1; sc.far = 80;
+  const sc = sun.shadow.camera; sc.left = -16; sc.right = 16; sc.top = 14; sc.bottom = -14; sc.near = 1; sc.far = 80;
   sun.shadow.bias = -0.0004; sun.shadow.normalBias = 0.03; sun.shadow.radius = 3;
   scene.add(sun, sun.target);
   scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x8a7a55, 1.7));
@@ -232,34 +234,81 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   const path = new THREE.Mesh(track(new THREE.PlaneGeometry(Wm + 6, 3)), track(new THREE.MeshLambertMaterial({ map: dirtTex })));
   path.rotation.x = -Math.PI / 2; path.position.set(0, 0.01, THICK / 2 + 1.5); path.receiveShadow = true; scene.add(path);
 
-  // ---- the wall: one box, front face = texture + scribbles ----
+  // ---- the wall: a row of boxes (segments), each with its own canvas texture on the front ----
   const maxTex = Math.min(4096, renderer.capabilities.maxTextureSize);
-  const k = Math.min(1, maxTex / Math.max(wallW, boardH));
-  const cv = document.createElement('canvas'); cv.width = Math.round(wallW * k); cv.height = Math.round(boardH * k);
-  const cx = cv.getContext('2d'); cx.scale(k, k);
-  paintSurface(cx, wallW, boardH, background.texture, background.color);
-  paintScribbles(cx, posts, wallW, boardH);
-  const wallTex = track(new THREE.CanvasTexture(cv));
-  wallTex.colorSpace = THREE.SRGBColorSpace; wallTex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const kTex = Math.min(0.75, maxTex / Math.max(SEG_PX, boardH)); // 0.75 keeps memory low and still looks crisp
   const side = track(new THREE.MeshLambertMaterial({ color: new THREE.Color(background.color).multiplyScalar(0.7) }));
-  const front = track(new THREE.MeshLambertMaterial({ map: wallTex }));
-  const wall = new THREE.Mesh(track(new THREE.BoxGeometry(Wm, Hm, THICK)), [side, side, side, side, front, side]);
-  wall.position.set(0, Hm / 2, 0); wall.castShadow = true; wall.receiveShadow = true; scene.add(wall);
+  const segCount = Math.ceil(wallW / SEG_PX);
+  for (let i = 0; i < segCount; i++) {
+    const x0 = i * SEG_PX, sw = Math.min(SEG_PX, wallW - x0);
+    const cv = document.createElement('canvas'); cv.width = Math.round(sw * kTex); cv.height = Math.round(boardH * kTex);
+    const g2 = cv.getContext('2d'); g2.scale(kTex, kTex);
+    paintSurface(g2, sw, boardH, background.texture, background.color, 7 + i);
+    g2.save(); g2.translate(-x0, 0); paintScribbles(g2, posts, wallW, boardH, x0, x0 + sw); g2.restore();
+    const tex = track(new THREE.CanvasTexture(cv));
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    const front = track(new THREE.MeshLambertMaterial({ map: tex }));
+    const seg = new THREE.Mesh(track(new THREE.BoxGeometry(sw / PX_PER_M, Hm, THICK)), [side, side, side, side, front, side]);
+    seg.position.set(-Wm / 2 + (x0 + sw / 2) / PX_PER_M, Hm / 2, 0); seg.castShadow = true; seg.receiveShadow = true; scene.add(seg);
+  }
 
-  // ---- a few blocky trees (their shadows fall across the wall, which sells the sun) ----
+  // ---- blocky trees, instanced (3 draw calls for all of them); their shadows fall across the wall ----
+  const blockers = []; // circles you can't walk through: { x, z, r }
+  const treeSpots = [];
+  const tr = rng(99);
+  const NPC_X = 2.2, NPC_Z = 3.6;
+  for (let x = -Wm / 2 + 2; x < Wm / 2; x += 5 + tr() * 7) { // in front of the wall
+    const z = 4.5 + tr() * 6, s2 = 1.1 + tr() * 0.6;
+    if (Math.hypot(x - NPC_X, z - NPC_Z) > 3 && Math.hypot(x, z - 7.5) > 2.5) treeSpots.push({ x, z, s: s2 });
+  }
+  for (let x = -Wm / 2 - 4; x < Wm / 2 + 4; x += 4 + tr() * 6) treeSpots.push({ x, z: -(4 + tr() * 14), s: 1.3 + tr() * 0.7 }); // behind (seen over the wall)
   const trunkM = track(new THREE.MeshLambertMaterial({ color: 0x6b4a2b })), leafM = track(new THREE.MeshLambertMaterial({ color: 0x3f8a3a }));
-  const trunkG = track(new THREE.BoxGeometry(0.4, 2.4, 0.4)), leafG = track(new THREE.BoxGeometry(2, 1.6, 2)), leafTopG = track(new THREE.BoxGeometry(1.2, 1.0, 1.2));
-  const tree = (x, z, s = 1) => {
-    const g = new THREE.Group();
-    const t = new THREE.Mesh(trunkG, trunkM); t.position.y = 1.2; const l1 = new THREE.Mesh(leafG, leafM); l1.position.y = 3.2; const l2 = new THREE.Mesh(leafTopG, leafM); l2.position.y = 4.4;
-    [t, l1, l2].forEach((m) => { m.castShadow = true; g.add(m); });
-    g.position.set(x, 0, z); g.scale.setScalar(s); scene.add(g);
-  };
-  tree(-Wm / 2 + 1.2, 5.2, 1.25); tree(Wm / 2 - 2.5, 6.2, 1.5); tree(Wm / 2 + 3, 1.5, 1.1); tree(-Wm / 2 - 3.5, 2.5, 1.2);
-  tree(-3, -6, 1.6); tree(4.5, -8, 1.8); tree(-Wm / 2 - 2, -5, 1.4); // behind the wall: only seen over/around it
+  const trunks = new THREE.InstancedMesh(track(new THREE.BoxGeometry(0.4, 2.4, 0.4)), trunkM, treeSpots.length);
+  const leaves = new THREE.InstancedMesh(track(new THREE.BoxGeometry(2, 1.6, 2)), leafM, treeSpots.length);
+  const tops = new THREE.InstancedMesh(track(new THREE.BoxGeometry(1.2, 1, 1.2)), leafM, treeSpots.length);
+  treeSpots.forEach((t, i) => {
+    const put = (mesh, y) => { m4.compose(v3.set(t.x, y * t.s, t.z), q, s3.set(t.s, t.s, t.s)); mesh.setMatrixAt(i, m4); };
+    put(trunks, 1.2); put(leaves, 3.2); put(tops, 4.4);
+    if (t.z > 0) blockers.push({ x: t.x, z: t.z, r: 1.1 * t.s });
+  });
+  [trunks, leaves, tops].forEach((m) => { m.castShadow = true; m.receiveShadow = false; m.frustumCulled = false; scene.add(m); });
+
+  // ---- the lost visitor: a blocky character looking around for everyone ----
+  const npc = (() => {
+    const grp = new THREE.Group();
+    const mat = (c) => track(new THREE.MeshLambertMaterial({ color: c }));
+    const skin = mat(0xe3b08a), suit = mat(0x1d1d2b), shirt = mat(0xf0f0f0), hair = mat(0x2b1d14), pants = mat(0x15151f), white = mat(0xffffff), dark = mat(0x111111);
+    const box = (w, h, d, m, x, y, z, parent = grp) => { const b = new THREE.Mesh(track(new THREE.BoxGeometry(w, h, d)), m); b.position.set(x, y, z); b.castShadow = true; parent.add(b); return b; };
+    box(0.22, 0.75, 0.24, pants, -0.13, 0.375, 0); box(0.22, 0.75, 0.24, pants, 0.13, 0.375, 0); // legs
+    box(0.52, 0.72, 0.3, suit, 0, 1.11, 0); box(0.18, 0.5, 0.02, shirt, 0, 1.2, 0.16);              // torso + shirt front
+    const head = new THREE.Group(); head.position.set(0, 1.47, 0); grp.add(head);
+    box(0.42, 0.42, 0.42, skin, 0, 0.21, 0, head); box(0.44, 0.14, 0.44, hair, 0, 0.46, -0.01, head); // head + hair
+    box(0.11, 0.09, 0.02, white, -0.1, 0.25, 0.215, head); box(0.11, 0.09, 0.02, white, 0.1, 0.25, 0.215, head);
+    box(0.05, 0.07, 0.02, dark, -0.1, 0.25, 0.225, head); box(0.05, 0.07, 0.02, dark, 0.1, 0.25, 0.225, head);
+    box(0.14, 0.04, 0.02, dark, 0, 0.09, 0.215, head);
+    const mkArm = (sx) => { const a = new THREE.Group(); a.position.set(sx * 0.35, 1.42, 0); grp.add(a); box(0.14, 0.62, 0.14, suit, 0, -0.3, 0, a); box(0.12, 0.12, 0.12, skin, 0, -0.66, 0, a); return a; };
+    const armL = mkArm(-1), armR = mkArm(1);
+    // the question mark above his head
+    const c = document.createElement('canvas'); c.width = c.height = 128;
+    const g3 = c.getContext('2d'); g3.font = 'bold 120px "Arial Black", Arial, sans-serif'; g3.textAlign = 'center'; g3.textBaseline = 'middle';
+    g3.lineWidth = 14; g3.strokeStyle = '#000'; g3.strokeText('?', 64, 70); g3.fillStyle = '#ffd400'; g3.fillText('?', 64, 70);
+    const qTex = track(new THREE.CanvasTexture(c)); qTex.colorSpace = THREE.SRGBColorSpace;
+    const q2 = new THREE.Sprite(track(new THREE.SpriteMaterial({ map: qTex, transparent: true })));
+    q2.scale.set(0.75, 0.75, 1); q2.position.set(0, 2.45, 0); grp.add(q2);
+    grp.position.set(NPC_X, 0, NPC_Z); scene.add(grp);
+    blockers.push({ x: NPC_X, z: NPC_Z, r: 0.6 });
+    return {
+      update(t) { // looks left and right (can't find anyone), shrugs, the ? bobs
+        head.rotation.y = Math.sin(t * 1.25) * 1.05; head.rotation.x = Math.sin(t * 0.6) * 0.12;
+        grp.rotation.y = Math.sin(t * 0.45) * 0.5;
+        armL.rotation.z = 0.55 + Math.max(0, Math.sin(t * 1.25)) * 0.5; armR.rotation.z = -0.55 - Math.max(0, -Math.sin(t * 1.25)) * 0.5;
+        q2.position.y = 2.45 + Math.sin(t * 3) * 0.08;
+      },
+    };
+  })();
 
   // ---- player ----
-  const st = { x: 0, z: 7.5, yaw: 0, pitch: 0.05 };
+  const st = { x: 0, z: 7.5, yaw: 0, pitch: 0.05, h: 0, vy: 0 };
   camera.position.set(st.x, EYE, st.z);
   const keys = new Set();
   let dirty = true, running = true, raf = 0, last = performance.now(), cloudAcc = 0;
@@ -268,48 +317,68 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix(); dirty = true;
   };
   resize();
+  const KEYMAP = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', shift: 'sprint', ' ': 'jump' };
+  let locked = false;
   const onKey = (e, down) => {
-    const k2 = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down' }[e.key.toLowerCase()];
-    if (e.key === 'Escape' && down) { close(); return; }
+    if (e.key === 'Escape') { if (down && !locked) close(); return; } // while the mouse is captured, Esc just releases it
+    const k2 = KEYMAP[e.key.toLowerCase()];
     if (k2) { e.preventDefault(); down ? keys.add(k2) : keys.delete(k2); }
   };
   const kd = (e) => onKey(e, true), ku = (e) => onKey(e, false);
   window.addEventListener('keydown', kd); window.addEventListener('keyup', ku);
+  window.addEventListener('blur', () => keys.clear());
   window.addEventListener('resize', resize);
-  const onVis = () => { last = performance.now(); dirty = true; };
+  const onVis = () => { last = performance.now(); dirty = true; keys.clear(); };
   document.addEventListener('visibilitychange', onVis);
 
-  // look around by dragging (mouse or finger)
-  let drag = null;
+  // Mouse (desktop): click to capture it, then it looks around freely, like Minecraft.
+  // Finger (phone) or a browser without pointer lock: drag to look.
   const cvs = renderer.domElement;
   cvs.style.touchAction = 'none';
-  cvs.addEventListener('pointerdown', (e) => { drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; cvs.setPointerCapture(e.pointerId); });
+  const onLockChange = () => { locked = document.pointerLockElement === cvs; root.classList.toggle('locked', locked); dirty = true; };
+  const onMouse = (e) => {
+    if (!locked) return;
+    st.yaw -= e.movementX * 0.0022;
+    st.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, st.pitch - e.movementY * 0.0022));
+    dirty = true;
+  };
+  document.addEventListener('pointerlockchange', onLockChange);
+  document.addEventListener('mousemove', onMouse);
+  let drag = null;
+  cvs.addEventListener('pointerdown', (e) => {
+    if (e.pointerType === 'mouse' && cvs.requestPointerLock) { try { cvs.requestPointerLock(); } catch { /* ignore */ } return; }
+    drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; cvs.setPointerCapture(e.pointerId);
+  });
   cvs.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
-    st.yaw = Math.max(-YAW_MAX, Math.min(YAW_MAX, st.yaw + (e.clientX - drag.x) * 0.0045));
+    st.yaw += (e.clientX - drag.x) * 0.0045;
     st.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, st.pitch + (e.clientY - drag.y) * 0.0035));
     drag.x = e.clientX; drag.y = e.clientY; dirty = true;
   });
   const endDrag = (e) => { if (drag && e.pointerId === drag.id) drag = null; };
   cvs.addEventListener('pointerup', endDrag); cvs.addEventListener('pointercancel', endDrag);
-  cvs.addEventListener('wheel', (e) => { e.preventDefault(); move(0, -e.deltaY * 0.004); }, { passive: false });
 
-  // on-screen pad (hold to walk)
+  // on-screen pad (hold to walk) for touch screens
   root.querySelectorAll('.v3d-pad button').forEach((b) => {
     const key = b.dataset.k;
     b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); keys.add(key); });
     const up = () => keys.delete(key);
     b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('lostpointercapture', up);
   });
-  root.querySelector('.v3d-close').addEventListener('click', () => close());
+  root.querySelector('.v3d-close').addEventListener('click', () => { if (document.pointerLockElement) document.exitPointerLock(); close(); });
 
-  // move relative to where you look, then keep you in front of the wall and inside its ends
+  // walk relative to where you look. You can look anywhere, but can't leave the front of the wall,
+  // go past its ends, or walk through trees / the lost guy.
   function move(strafe, fwd) {
     const sy = Math.sin(st.yaw), cy = Math.cos(st.yaw);
     st.x += strafe * cy + fwd * -sy;
     st.z += strafe * -sy + fwd * -cy;
     st.x = Math.max(-Wm / 2 - 0.4, Math.min(Wm / 2 + 0.4, st.x));
     st.z = Math.max(Z_MIN, Math.min(Z_MAX, st.z));
+    for (const b of blockers) {
+      const dx = st.x - b.x, dz = st.z - b.z, d = Math.hypot(dx, dz), min = b.r + 0.3;
+      if (d < min && d > 1e-4) { st.x = b.x + (dx / d) * min; st.z = b.z + (dz / d) * min; }
+    }
     dirty = true;
   }
 
@@ -320,14 +389,22 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     const sx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0);
     const fz = (keys.has('up') ? 1 : 0) - (keys.has('down') ? 1 : 0);
-    if (sx || fz) move(sx * SPEED * dt, fz * SPEED * dt);
+    const spd = SPEED * (keys.has('sprint') ? 1.8 : 1);
+    if (sx || fz) { const n = Math.hypot(sx, fz); move((sx / n) * spd * dt, (fz / n) * spd * dt); }
+    // Minecraft-style jump (Space)
+    if (keys.has('jump') && st.h === 0) st.vy = 5;
+    if (st.h > 0 || st.vy > 0) { st.vy -= 16 * dt; st.h = Math.max(0, st.h + st.vy * dt); if (st.h === 0) st.vy = 0; dirty = true; }
     cloudAcc += dt;
-    if (cloudAcc > 1 / 12) { // clouds drift slowly; ~12 fps is plenty
+    if (cloudAcc > 1 / 15) { // clouds drift and the guy looks around; ~15 fps is plenty
+      npc.update(now / 1000);
       for (const c of cloudData) { c.x += cloudAcc * 1.2; if (c.x > CLOUD_RANGE + 30) c.x -= CLOUD_RANGE * 2 + 60; }
       writeClouds(); cloudAcc = 0; dirty = true;
     }
     if (!dirty) return;
-    camera.position.set(st.x, EYE + Math.sin(now / 260) * (sx || fz ? 0.025 : 0), st.z);
+    camera.position.set(st.x, EYE + st.h + (st.h === 0 ? Math.sin(now / 260) * (sx || fz ? 0.025 : 0) : 0), st.z);
+    // keep the (small, sharp) shadow window centered on the player, snapped so shadows don't shimmer
+    const snap = Math.round(st.x / 2) * 2;
+    sun.position.set(snap + sunDir.x * 30, sunDir.y * 30, sunDir.z * 30); sun.target.position.set(snap, 1, 0); sun.target.updateMatrixWorld();
     camera.rotation.set(st.pitch, st.yaw, 0);
     skyGroup.position.copy(camera.position);
     renderer.render(scene, camera);
@@ -341,8 +418,10 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     running = false; cancelAnimationFrame(raf);
     window.removeEventListener('keydown', kd); window.removeEventListener('keyup', ku);
     window.removeEventListener('resize', resize); document.removeEventListener('visibilitychange', onVis);
+    document.removeEventListener('pointerlockchange', onLockChange); document.removeEventListener('mousemove', onMouse);
+    if (document.pointerLockElement) document.exitPointerLock();
     disposables.forEach((d) => d.dispose && d.dispose());
-    cloudMesh.dispose();
+    cloudMesh.dispose(); trunks.dispose(); leaves.dispose(); tops.dispose();
     renderer.dispose(); renderer.forceContextLoss();
     root.remove(); onClose();
   }

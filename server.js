@@ -12,6 +12,8 @@ const DATA_FILE = path.join(DATA_DIR, 'db.json');
 // ---- Limits / whitelists -------------------------------------------------
 const MAX_TEXT = 140;
 const MAX_POSTS_PER_WALL = 2000;
+// Board width in px (must match what the client draws). x of a scribble is a % of the free width.
+const WALL_W = 10080; // 50 m in the 3D view (200 px = 1 m); a multiple of 3360 so 3D wall segments line up
 const MAX_Y = 20000; // px from the top of the wall; x is 0-100 (% of the free width)
 const FONTS = [
   'Permanent Marker', 'Rock Salt', 'Special Elite', 'Londrina Solid',
@@ -96,6 +98,22 @@ function save() {
   saveTimer = setTimeout(flush, 300);
 }
 
+// The board used to be narrower. When it grows, keep every scribble where the viewer saw it:
+// left(px) stays the same, shifted so the old content sits in the middle of the new, wider wall.
+{
+  const oldW = db.boardW || 2400;
+  if (oldW !== WALL_W) {
+    for (const w of Object.values(db.walls)) {
+      for (const p of w.posts || []) {
+        const left = (p.x / 100) * oldW + (WALL_W - oldW) / 2;
+        p.x = Math.min(100, Math.max(0, Math.round((left / WALL_W) * 1000) / 10));
+      }
+    }
+    db.boardW = WALL_W;
+    save();
+  }
+}
+
 function getWall(slug, create = false) {
   if (!db.walls[slug] && create) {
     db.walls[slug] = { slug, background: { ...PRESETS.brick }, setup: false, createdAt: Date.now(), posts: [] };
@@ -133,7 +151,7 @@ app.use('/vendor/vue.js', (req, res) =>
 );
 
 app.get('/api/meta', (req, res) =>
-  res.json({ fonts: FONTS, textures: TEXTURES, presets: PRESETS, maxText: MAX_TEXT })
+  res.json({ fonts: FONTS, textures: TEXTURES, presets: PRESETS, maxText: MAX_TEXT, wallWidth: WALL_W })
 );
 
 // Recently active walls (for the navigation modal)
