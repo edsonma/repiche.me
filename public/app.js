@@ -10,6 +10,7 @@ const MAX_Y = 20000;     // keep in sync with server.js
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
 
 createApp({
+  render: window.__appRender, // precompiled by the server (see /render.js), so no eval in the browser
   setup() {
     const slugFromPath = () => decodeURIComponent(location.pathname.slice(1)).toLowerCase() || 'home';
 

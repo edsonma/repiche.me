@@ -168,12 +168,11 @@ const apiBudget = (req, res, next) => {
 const app = express();
 app.set('trust proxy', 1); // behind Railway's proxy: req.ip must be the real client IP
 app.disable('x-powered-by');
-// Security headers. 'unsafe-eval' is needed only because Vue compiles the in-page templates in the
-// browser; script-src is otherwise limited to our own files (no inline scripts, no third parties).
+// Security headers. script-src allows only our own files: no inline scripts, no eval, no third parties.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-eval'",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+  "script-src 'self'",
+  "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
   "img-src 'self' data: blob:",
   "connect-src 'self'",
@@ -196,13 +195,21 @@ app.use((req, res, next) => {
 });
 app.use(express.json({ limit: '4kb' }));
 app.use('/api', apiBudget);
+// The page template is compiled once at startup into a plain render function, so the browser uses
+// Vue's runtime-only build and the CSP needs no 'unsafe-eval'.
+const { compile } = require('@vue/compiler-dom');
+const { code: renderCode } = compile(fs.readFileSync(path.join(__dirname, 'src', 'app.template.html'), 'utf8'), {
+  mode: 'function', whitespace: 'condense', onError: (e) => { throw e; },
+});
+const RENDER_JS = `window.__appRender = (function () {\n${renderCode}\n})();\n`;
+app.get('/render.js', (req, res) => res.type('application/javascript').set('Cache-Control', 'no-cache').send(RENDER_JS));
 app.get('/health', (req, res) => res.json({ ok: true }));
 app.use(express.static(path.join(__dirname, 'public')));
 app.get('/vendor/three.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/three/build/three.module.min.js'))
 );
 app.use('/vendor/vue.js', (req, res) =>
-  res.sendFile(path.join(__dirname, 'node_modules/vue/dist/vue.global.prod.js'))
+  res.sendFile(path.join(__dirname, 'node_modules/vue/dist/vue.runtime.global.prod.js'))
 );
 
 app.get('/api/meta', (req, res) =>

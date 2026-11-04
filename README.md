@@ -40,3 +40,9 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 ## Not implemented (yet)
 
 Accounts, chat, the 2013 redesign, moderation tools, a real database.
+
+## Tests
+
+`npm test` runs the API/security suite (48 checks) and two browser suites (creation popup, wide wall, rotation, size, 3D, CSP; board positions, dragging, zoom, phone touch). They start their own server on a free port with a temporary data folder. Browser suites need Chrome (`CHROME_BIN=/path/to/chrome`). `npm run test:api` needs no browser.
+
+The page template lives in `src/app.template.html` (not in `public/index.html`).

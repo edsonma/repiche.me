@@ -1,0 +1,154 @@
+<!-- Vue template of the whole page. Compiled to a render function when the server starts
+     (served as /render.js), so the browser never needs eval / the Vue compiler. -->
+    <div class="stage" :class="'tx-' + background.texture" :style="{ '--wall': background.color }">
+
+      <header class="topbar">
+        <a class="logo" href="/" @click.prevent="go('home')">repiche<span>.me</span></a>
+        <div class="wall-name">/{{ slug }} <small v-if="total">({{ total }} pichações)</small></div>
+        <div class="actions">
+          <button @click="showNav = true">muros</button>
+          <button class="outline" @click="showCredits = true">créditos</button>
+          <button class="icon3d" @click="open3D" :disabled="opening3d" title="Ver o muro em 3D" aria-label="Ver o muro em 3D">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5 3.5 7v10L12 21.5 20.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
+            <span>3D</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- The wall is a 2D board inside a scroll area. Scribbles are absolutely positioned
+           (x = % of the free width, y = px from the top), so they never move around.
+           Zoom scales the board; the sizer gives the scroll area the scaled size. -->
+      <div class="viewport" ref="viewportEl">
+        <div class="pad">
+          <div class="sizer" :style="{ width: baseW * zoom + 'px', height: wallH * zoom + 'px' }">
+            <main class="wall" ref="wallEl"
+                  :style="{ width: baseW + 'px', height: wallH + 'px', transform: 'scale(' + zoom + ')' }">
+              <p class="empty" v-if="!loading && !posts.length && !placing">Muro vazio. Seja o primeiro a pichar!</p>
+              <div class="scribble"
+                   v-for="p in posts" :key="p.id"
+                   :class="{ fresh: p.id === freshId }"
+                   :style="scribbleStyle(p)">{{ p.text }}</div>
+              <!-- the scribble being placed: drag it, then "Fixar aqui" -->
+              <div class="scribble ghost" v-if="placing" ref="ghostEl"
+                   :class="{ dragging: draggingGhost }" :style="ghostStyle"
+                   @pointerdown="dragStart" @pointermove="dragMove" @pointerup="dragEnd" @pointercancel="dragEnd">{{ draft.text || '…' }}</div>
+            </main>
+          </div>
+        </div>
+      </div>
+
+      <!-- zoom: in is capped, out is not -->
+      <div class="zoombar" role="group" aria-label="Zoom">
+        <button :disabled="zoom >= ZOOM_MAX" @click="zoomBy(1.25)" :title="'aproximar (máx. ' + ZOOM_MAX * 100 + '%)'">+</button>
+        <button class="pct" @click="setZoom(1)" title="voltar a 100%">{{ zoomLabel }}</button>
+        <button @click="zoomBy(0.8)" title="afastar (sem limite)">&minus;</button>
+      </div>
+
+      <!-- compose panel: "Pichar" starts placing, "Fixar aqui" saves it where you dropped it -->
+      <form class="compose" @submit.prevent="onSubmit">
+        <input v-model="draft.text" :maxlength="meta.maxText" placeholder="Pichar algo neste muro…" autocomplete="off">
+        <select v-model="draft.font" :style="{ fontFamily: `'${draft.font}'` }">
+          <option v-for="f in meta.fonts" :key="f" :value="f" :style="{ fontFamily: `'${f}'` }">{{ f }}</option>
+        </select>
+        <input type="color" v-model="draft.color" title="Cor">
+        <input type="range" min="14" max="72" v-model.number="draft.size" title="Tamanho">
+        <label class="bold"><input type="checkbox" v-model="draft.bold"> <b>B</b></label>
+        <template v-if="!placing">
+          <button type="submit" :disabled="sending">Pichar</button>
+        </template>
+        <template v-else>
+          <button type="submit" :disabled="sending">Fixar aqui</button>
+          <button type="button" class="secondary" @click="cancelPlacing">Cancelar</button>
+        </template>
+        <div class="hint" v-if="placing">
+          <span>Arraste a pichação até o lugar que quiser e toque em <b>Fixar aqui</b>. No celular, gire com dois dedos.</span>
+          <label class="rotate">Girar
+            <input type="range" min="-180" max="180" step="1" v-model.number="placing.rot" title="Girar">
+            <output>{{ Math.round(placing.rot) }}°</output>
+            <button type="button" class="secondary" @click="placing.rot = 0" title="sem rotação">0°</button>
+          </label>
+        </div>
+        <div class="preview" v-else :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: draft.size + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
+          {{ draft.text || 'pré-visualização' }}
+        </div>
+        <div class="error" v-if="error">{{ error }}</div>
+      </form>
+
+      <!-- creation popup: a wall with no name/look yet and no scribbles -->
+      <div class="modal-backdrop" v-if="showSetup">
+        <div class="modal setup">
+          <h2>Crie seu muro</h2>
+          <p>Escolha o nome (o endereço) e a cara do muro antes da primeira pichação.</p>
+          <label class="field">Nome do muro
+            <span class="namerow">repiche.me/
+              <input v-model="setupName" @input="cleanSetupName" maxlength="30" placeholder="nome-do-muro" autocomplete="off">
+            </span>
+          </label>
+          <div class="step">1. Superfície</div>
+          <div class="tiles">
+            <button type="button" v-for="t in meta.textures" :key="t.id" class="tile"
+                    :class="{ on: background.texture === t.id }" @click="setTexture(t.id)">
+              <span class="thumb" :class="'tx-' + t.id" :style="{ '--wall': background.color }"></span>
+              <span class="lbl">{{ t.label }}</span>
+            </button>
+          </div>
+          <div class="step">2. Cor</div>
+          <div class="dots">
+            <button type="button" v-for="c in palette" :key="c" class="dot" :aria-label="c"
+                    :class="{ on: background.color === c }" :style="{ background: c }" @click="setColor(c)"></button>
+            <label class="dot custom" title="outra cor" :class="{ on: !palette.includes(background.color) }">
+              <input type="color" :value="background.color" @input="setColor($event.target.value)">
+            </label>
+          </div>
+          <p class="err" v-if="setupError">{{ setupError }}
+            <a v-if="existsName" :href="'/' + existsName" @click.prevent="go(existsName)">Entrar em /{{ existsName }}</a>
+          </p>
+          <div class="btns">
+            <button type="button" :disabled="creating" @click="createWall">Criar muro</button>
+            <button type="button" class="secondary" @click="setupDismissed = true">agora não</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- wall navigation modal -->
+      <div class="modal-backdrop" v-if="showNav" @click.self="showNav = false">
+        <div class="modal">
+          <h2>Criar ou visitar um muro</h2>
+          <form @submit.prevent="goCustom">
+            <span>repiche.me/</span><input v-model="newSlug" placeholder="nome-do-muro" maxlength="30">
+            <button>ir</button>
+          </form>
+          <h3>Muros recentes</h3>
+          <ul>
+            <li v-for="w in walls" :key="w.slug">
+              <a :href="'/' + w.slug" @click.prevent="go(w.slug)">/{{ w.slug }}</a> <small>{{ w.count }} pichações</small>
+            </li>
+          </ul>
+          <button class="close" @click="showNav = false">fechar</button>
+        </div>
+      </div>
+
+      <!-- credits modal: the original piche.me creators -->
+      <div class="modal-backdrop" v-if="showCredits" @click.self="showCredits = false">
+        <div class="modal credits">
+          <h2>Sobre o piche.me original</h2>
+          <p>O <b>repiche.me</b> é uma homenagem ao <b>piche.me</b>, rede social brasileira criada em 2011 por um grupo de amigos de Brasília, em um único fim de semana. Era um muro virtual onde qualquer pessoa podia escrever o que quisesse, sem cadastro. O site saiu do ar em 2015.</p>
+          <h3>Criadores originais</h3>
+          <p>Segundo o <i>Correio Braziliense</i> (2011):</p>
+          <ul>
+            <li><b>Túlio Ornelas</b>, engenheiro de software e um dos fundadores. A ideia surgiu ao assistir a um documentário sobre a queda do Muro de Berlim.</li>
+            <li><b>Wesley Rocha</b>, designer de interfaces da equipe.</li>
+          </ul>
+          <p>Também fizeram parte da equipe: <b>Renan</b>, <b>Karina Macedo</b>, <b>Rodrigo Ramalho</b> e <b>Celio Latorraca</b>.</p>
+          <h3>Referências</h3>
+          <ul>
+            <li><a href="https://deriva-telar.fau.usp.br/piche-me/" target="_blank" rel="noopener noreferrer">piche.me (2011-2015)</a>, por Caroline Speridião, projeto deriva~telar (FAU-USP)</li>
+            <li><a href="https://www.correiobraziliense.com.br/app/noticia/tecnologia/2011/07/01/interna_tecnologia,259239/site-permite-que-internautas-deixem-mensagem-em-muros-vira-febre-na-rede.shtml" target="_blank" rel="noopener noreferrer">Site permite que internautas deixem mensagem em muros</a>, Correio Braziliense, 2011</li>
+            <li><a href="http://web.archive.org/web/20111026051021/http://piche.me/" target="_blank" rel="noopener noreferrer">piche.me em 26/10/2011</a>, Web Archive</li>
+          </ul>
+          <p class="note">Projeto independente de homenagem, sem vínculo com os criadores originais.</p>
+          <button class="close" @click="showCredits = false">fechar</button>
+        </div>
+      </div>
+
+    </div>
