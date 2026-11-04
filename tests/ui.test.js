@@ -98,14 +98,18 @@ const J = { 'Content-Type': 'application/json' };
   const saved = (await (await fetch(base + '/api/walls/lab')).json()).posts[0];
   check('rotation and size are saved', saved && Math.abs(saved.rot - 45) <= 2 && saved.size === 30, JSON.stringify(saved && [saved.rot, saved.size]));
 
-  // ---------- 3D ----------
+  // ---------- 3D (skipped where the browser has no WebGL) ----------
+  const hasGL = await p.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2') || !!document.createElement('canvas').getContext('webgl'); } catch { return false; } });
+  if (!hasGL) { console.log('SKIP  3D checks: no WebGL in this browser'); }
+  else {
   await p.tap('.icon3d');
   await p.waitForSelector('.v3d canvas', { timeout: 30000 });
   await sleep(4000);
   check('3D view opens and renders a canvas', await p.$eval('.v3d canvas', (c) => c.width > 0 && c.height > 0));
-  check('3D shows the lost visitor script loaded without errors', bad.length === 0, bad.join(' | '));
+  check('3D opened without CSP violations or page errors', bad.length === 0, bad.join(' | '));
   await p.tap('.v3d-close'); await sleep(300);
   check('3D closes', !(await p.$('.v3d')));
+  }
   check('no CSP violations / page errors in the whole run', bad.length === 0, bad.join(' | '));
   await p.close(); await b.close(); await s.stop();
   process.exit(t.done() ? 1 : 0);

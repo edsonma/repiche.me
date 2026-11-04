@@ -76,7 +76,7 @@ const TOKEN = 'correct-horse-battery-staple';
   const h = (await fetch(B + '/')).headers;
   const csp = h.get('content-security-policy') || '';
   check('CSP: frame-ancestors none', /frame-ancestors 'none'/.test(csp));
-  check("CSP: no unsafe-eval, no unsafe-inline", !/unsafe-eval|unsafe-inline/.test(csp), csp);
+  check("CSP: scripts only from 'self' (+ unsafe-eval), no unsafe-inline, no third-party scripts", /script-src 'self' 'unsafe-eval'(;|$)/.test(csp) && !/unsafe-inline/.test(csp), csp);
   check('nosniff + X-Frame-Options + referrer policy', h.get('x-content-type-options') === 'nosniff' && h.get('x-frame-options') === 'DENY' && !!h.get('referrer-policy'));
   check('X-Powered-By hidden', !h.get('x-powered-by'));
   const rj = await (await fetch(B + '/render.js')).text();

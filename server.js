@@ -168,10 +168,11 @@ const apiBudget = (req, res, next) => {
 const app = express();
 app.set('trust proxy', 1); // behind Railway's proxy: req.ip must be the real client IP
 app.disable('x-powered-by');
-// Security headers. script-src allows only our own files: no inline scripts, no eval, no third parties.
+// Security headers. script-src allows only our own files (no inline scripts, no third parties) plus
+// 'unsafe-eval', as requested. The app itself no longer needs it: the page template is precompiled.
 const CSP = [
   "default-src 'self'",
-  "script-src 'self'",
+  "script-src 'self' 'unsafe-eval'",
   "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
   "img-src 'self' data: blob:",
