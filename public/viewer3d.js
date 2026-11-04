@@ -140,6 +140,69 @@ function glowTexture() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+// ---------- happy background music ----------
+// An original little tune synthesized live with the Web Audio API: no audio files, no samples and no
+// existing song, so there is nothing to license. C major, 118 bpm, 8-bar loop (square lead, triangle
+// arpeggio + bass, soft drums).
+export function createMusic() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  const ctx = new AC();
+  const master = ctx.createGain(); master.gain.value = 0; master.connect(ctx.destination);
+  const STEP = 60 / 118 / 2; // one eighth note
+  const hz = (m) => 440 * Math.pow(2, (m - 69) / 12);
+  const BARS = [ // bass root + chord tones (C G Am F C G F G)
+    { r: 48, t: [60, 64, 67] }, { r: 43, t: [59, 62, 67] }, { r: 45, t: [57, 60, 64] }, { r: 41, t: [60, 65, 69] },
+    { r: 48, t: [60, 64, 67] }, { r: 43, t: [59, 62, 67] }, { r: 41, t: [60, 65, 69] }, { r: 43, t: [59, 62, 67] },
+  ];
+  const N = null;
+  const MELODY = [
+    76, N, 79, 76, 72, N, 74, 76,   79, N, 74, N, 71, 74, 79, N,
+    81, N, 76, 81, 84, N, 81, 76,   77, N, 81, 77, 72, N, 77, N,
+    76, 76, 79, N, 84, N, 79, 76,   74, N, 79, 74, 71, N, 67, N,
+    77, N, 81, N, 84, 81, 77, 72,   79, N, 74, 76, 79, N, N, N,
+  ];
+  const noiseBuf = ctx.createBuffer(1, ctx.sampleRate, ctx.sampleRate);
+  { const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1; }
+  const env = (g, t, vol, dur) => { g.gain.setValueAtTime(0.0001, t); g.gain.linearRampToValueAtTime(vol, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0001, t + dur); };
+  function tone(type, midi, t, dur, vol, cutoff = 4000) {
+    const o = ctx.createOscillator(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    o.type = type; o.frequency.value = hz(midi); f.type = 'lowpass'; f.frequency.value = cutoff;
+    env(g, t, vol, dur); o.connect(f); f.connect(g); g.connect(master); o.start(t); o.stop(t + dur + 0.05);
+  }
+  function hit(t, dur, vol, type, freq) {
+    const src = ctx.createBufferSource(), f = ctx.createBiquadFilter(), g = ctx.createGain();
+    src.buffer = noiseBuf; f.type = type; f.frequency.value = freq;
+    env(g, t, vol, dur); src.connect(f); f.connect(g); g.connect(master); src.start(t); src.stop(t + dur + 0.05);
+  }
+  function kick(t) {
+    const o = ctx.createOscillator(), g = ctx.createGain();
+    o.frequency.setValueAtTime(150, t); o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+    env(g, t, 0.5, 0.18); o.connect(g); g.connect(master); o.start(t); o.stop(t + 0.25);
+  }
+  function schedule(i, t) {
+    const bar = (i >> 3) % 8, s = i & 7, c = BARS[bar];
+    const m = MELODY[bar * 8 + s];
+    if (m != null) tone('square', m, t, STEP * (MELODY[(bar * 8 + s + 1) % 64] == null ? 1.8 : 0.9), 0.06, 3200);
+    tone('triangle', c.t[[0, 1, 2, 1, 0, 1, 2, 1][s]], t, STEP * 0.9, 0.06);
+    if (s === 0 || s === 4) tone('triangle', c.r, t, STEP * 1.9, 0.2, 900);
+    if (s === 2 || s === 6) tone('triangle', c.r + 7, t, STEP * 0.9, 0.12, 900);
+    if (s === 0 || s === 4) kick(t);
+    if (s === 2 || s === 6) hit(t, 0.1, 0.09, 'bandpass', 1800);
+    if (s & 1) hit(t, 0.03, 0.035, 'highpass', 7000);
+  }
+  let timer = null, next = 0, idx = 0, muted = false;
+  const tick = () => { while (next < ctx.currentTime + 0.35) { schedule(idx, next); next += STEP; idx++; } };
+  const level = () => master.gain.setTargetAtTime(muted ? 0 : 0.5, ctx.currentTime, 0.05);
+  return {
+    start() { ctx.resume(); if (!timer) { next = ctx.currentTime + 0.1; idx = 0; tick(); timer = setInterval(tick, 100); } level(); },
+    resume() { if (ctx.state !== 'running') ctx.resume(); },
+    pause() { ctx.suspend(); },
+    setMuted(m) { muted = m; level(); },
+    stop() { clearInterval(timer); timer = null; ctx.close(); },
+  };
+}
+
 export async function open3D({ posts, background, wallW, wallH, fonts = [], onClose = () => {} }) {
   const isTouch = matchMedia('(pointer: coarse)').matches;
   const boardH = Math.min(MAX_H_PX, Math.max(MIN_H_PX, Math.ceil(wallH)));
@@ -152,10 +215,9 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   root.innerHTML = `
     <div class="v3d-msg">Carregando o muro…</div>
     <button class="v3d-close" aria-label="Sair do 3D" title="Sair (Esc)">✕</button>
-    <div class="v3d-hint">${isTouch ? 'Arraste para olhar · use os botões para andar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
-    <div class="v3d-pad" aria-label="Andar">
-      <button data-k="up">▲</button><button data-k="left">◀</button><button data-k="down">▼</button><button data-k="right">▶</button>
-    </div>`;
+    <button class="v3d-music" aria-label="Música" title="Música ligada/desligada">🔊</button>
+    <div class="v3d-hint">${isTouch ? 'Círculo à esquerda: andar · arraste à direita: olhar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
+    ${isTouch ? '<div class="v3d-joy" aria-label="Andar"><div class="knob"></div></div><button class="v3d-jump" aria-label="Pular">⤒</button>' : ''}`;
   document.body.appendChild(root);
   const msg = root.querySelector('.v3d-msg');
 
@@ -328,7 +390,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   window.addEventListener('keydown', kd); window.addEventListener('keyup', ku);
   window.addEventListener('blur', () => keys.clear());
   window.addEventListener('resize', resize);
-  const onVis = () => { last = performance.now(); dirty = true; keys.clear(); };
+  const onVis = () => { last = performance.now(); dirty = true; keys.clear(); if (music) document.hidden ? music.pause() : music.resume(); };
   document.addEventListener('visibilitychange', onVis);
 
   // Mouse (desktop): click to capture it, then it looks around freely, like Minecraft.
@@ -351,20 +413,57 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   });
   cvs.addEventListener('pointermove', (e) => {
     if (!drag || e.pointerId !== drag.id) return;
-    st.yaw += (e.clientX - drag.x) * 0.0045;
-    st.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, st.pitch + (e.clientY - drag.y) * 0.0035));
+    // like Minecraft: drag right = look right, drag up = look up
+    st.yaw -= (e.clientX - drag.x) * 0.005;
+    st.pitch = Math.max(-PITCH_MAX, Math.min(PITCH_MAX, st.pitch - (e.clientY - drag.y) * 0.005));
     drag.x = e.clientX; drag.y = e.clientY; dirty = true;
   });
   const endDrag = (e) => { if (drag && e.pointerId === drag.id) drag = null; };
   cvs.addEventListener('pointerup', endDrag); cvs.addEventListener('pointercancel', endDrag);
 
-  // on-screen pad (hold to walk) for touch screens
-  root.querySelectorAll('.v3d-pad button').forEach((b) => {
-    const key = b.dataset.k;
-    b.addEventListener('pointerdown', (e) => { e.preventDefault(); b.setPointerCapture(e.pointerId); keys.add(key); });
-    const up = () => keys.delete(key);
-    b.addEventListener('pointerup', up); b.addEventListener('pointercancel', up); b.addEventListener('lostpointercapture', up);
-  });
+  // left thumb: circular joystick (like Minecraft on phones). Analog: push further = walk faster; edge = run.
+  const joy = { x: 0, y: 0, mag: 0 };
+  const joyEl = root.querySelector('.v3d-joy');
+  if (joyEl) {
+    const knob = joyEl.querySelector('.knob'), R = 46;
+    let id = null, cx0 = 0, cy0 = 0;
+    const setVec = (e) => {
+      let dx = e.clientX - cx0, dy = e.clientY - cy0; const d = Math.hypot(dx, dy);
+      if (d > R) { dx *= R / d; dy *= R / d; }
+      knob.style.transform = `translate(${dx}px, ${dy}px)`;
+      if (d / R < 0.15) { joy.x = joy.y = joy.mag = 0; } else { joy.x = dx / R; joy.y = -dy / R; joy.mag = Math.hypot(joy.x, joy.y); }
+    };
+    const reset = (e) => { if (e.pointerId !== id) return; id = null; joy.x = joy.y = joy.mag = 0; knob.style.transform = ''; };
+    joyEl.addEventListener('pointerdown', (e) => {
+      e.preventDefault(); id = e.pointerId; joyEl.setPointerCapture(id);
+      const r = joyEl.getBoundingClientRect(); cx0 = r.left + r.width / 2; cy0 = r.top + r.height / 2; setVec(e);
+    });
+    joyEl.addEventListener('pointermove', (e) => { if (e.pointerId === id) setVec(e); });
+    joyEl.addEventListener('pointerup', reset); joyEl.addEventListener('pointercancel', reset);
+  }
+  const jumpEl = root.querySelector('.v3d-jump');
+  if (jumpEl) {
+    jumpEl.addEventListener('pointerdown', (e) => { e.preventDefault(); jumpEl.setPointerCapture(e.pointerId); keys.add('jump'); });
+    const up = () => keys.delete('jump');
+    jumpEl.addEventListener('pointerup', up); jumpEl.addEventListener('pointercancel', up);
+  }
+
+  // music (original, synthesized): starts with the view, can be muted; the choice is remembered
+  const music = createMusic();
+  const musicBtn = root.querySelector('.v3d-music');
+  let musicOn = true;
+  try { musicOn = localStorage.getItem('repiche.3d.music') !== '0'; } catch { /* storage unavailable */ }
+  const paintMusicBtn = () => { musicBtn.textContent = musicOn ? '🔊' : '🔇'; };
+  paintMusicBtn();
+  if (!music) musicBtn.hidden = true;
+  else {
+    music.setMuted(!musicOn); music.start();
+    musicBtn.addEventListener('click', () => {
+      musicOn = !musicOn; music.setMuted(!musicOn); music.resume(); paintMusicBtn();
+      try { localStorage.setItem('repiche.3d.music', musicOn ? '1' : '0'); } catch { /* ignore */ }
+    });
+    root.addEventListener('pointerdown', () => music.resume()); // iOS only starts audio inside a touch
+  }
   root.querySelector('.v3d-close').addEventListener('click', () => { if (document.pointerLockElement) document.exitPointerLock(); close(); });
 
   // walk relative to where you look. You can look anywhere, but can't leave the front of the wall,
@@ -387,10 +486,11 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     raf = requestAnimationFrame(frame);
     if (document.hidden) return;
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
-    const sx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0);
-    const fz = (keys.has('up') ? 1 : 0) - (keys.has('down') ? 1 : 0);
-    const spd = SPEED * (keys.has('sprint') ? 1.8 : 1);
-    if (sx || fz) { const n = Math.hypot(sx, fz); move((sx / n) * spd * dt, (fz / n) * spd * dt); }
+    let sx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0) + joy.x;
+    let fz = (keys.has('up') ? 1 : 0) - (keys.has('down') ? 1 : 0) + joy.y;
+    const nn = Math.hypot(sx, fz); if (nn > 1) { sx /= nn; fz /= nn; } // never faster diagonally
+    const spd = SPEED * (keys.has('sprint') || joy.mag > 0.92 ? 1.8 : 1);
+    if (sx || fz) move(sx * spd * dt, fz * spd * dt);
     // Minecraft-style jump (Space)
     if (keys.has('jump') && st.h === 0) st.vy = 5;
     if (st.h > 0 || st.vy > 0) { st.vy -= 16 * dt; st.h = Math.max(0, st.h + st.vy * dt); if (st.h === 0) st.vy = 0; dirty = true; }
@@ -407,6 +507,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     sun.position.set(snap + sunDir.x * 30, sunDir.y * 30, sunDir.z * 30); sun.target.position.set(snap, 1, 0); sun.target.updateMatrixWorld();
     camera.rotation.set(st.pitch, st.yaw, 0);
     skyGroup.position.copy(camera.position);
+    root.dataset.view = [st.x, st.z, st.yaw, st.pitch].map((v) => v.toFixed(3)).join(','); // read by the tests
     renderer.render(scene, camera);
     dirty = false;
     if (msg) { msg.remove(); }
@@ -421,6 +522,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     document.removeEventListener('pointerlockchange', onLockChange); document.removeEventListener('mousemove', onMouse);
     if (document.pointerLockElement) document.exitPointerLock();
     disposables.forEach((d) => d.dispose && d.dispose());
+    if (music) music.stop();
     cloudMesh.dispose(); trunks.dispose(); leaves.dispose(); tops.dispose();
     renderer.dispose(); renderer.forceContextLoss();
     root.remove(); onClose();

@@ -107,6 +107,35 @@ const J = { 'Content-Type': 'application/json' };
   await sleep(4000);
   check('3D view opens and renders a canvas', await p.$eval('.v3d canvas', (c) => c.width > 0 && c.height > 0));
   check('3D opened without CSP violations or page errors', bad.length === 0, bad.join(' | '));
+  // touch controls: joystick on the left, free look on the right, Minecraft directions
+  const view = () => p.$eval('.v3d', (e) => e.dataset.view.split(',').map(Number)); // x, z, yaw, pitch
+  check('touch: joystick + jump button shown, old arrow pad gone', !!(await p.$('.v3d-joy')) && !!(await p.$('.v3d-jump')) && !(await p.$('.v3d-pad')));
+  const jb = await (await p.$('.v3d-joy')).boundingBox();
+  const jc = { x: jb.x + jb.width / 2, y: jb.y + jb.height / 2 };
+  const v0 = await view();
+  await send('touchStart', [{ x: jc.x, y: jc.y, id: 7 }]);
+  await send('touchMove', [{ x: jc.x, y: jc.y - 40, id: 7 }]);
+  await sleep(1200);
+  const knobMoved = await p.$eval('.v3d-joy .knob', (e) => e.style.transform);
+  await send('touchEnd', []); await sleep(400);
+  const v1 = await view();
+  check('joystick up walks forward (toward the wall)', v1[1] < v0[1] - 0.8 && Math.abs(v1[0] - v0[0]) < 0.2 && /translate/.test(knobMoved), JSON.stringify([v0[1], v1[1]]));
+  await send('touchStart', [{ x: jc.x, y: jc.y, id: 8 }]);
+  await send('touchMove', [{ x: jc.x + 45, y: jc.y, id: 8 }]);
+  await sleep(900); await send('touchEnd', []); await sleep(400);
+  const v2 = await view();
+  check('joystick right strafes right', v2[0] > v1[0] + 0.6, JSON.stringify([v1[0], v2[0]]));
+  await send('touchStart', [{ x: 280, y: 400, id: 9 }]);
+  for (let i = 1; i <= 8; i++) await send('touchMove', [{ x: 280 + i * 12, y: 400 - i * 8, id: 9 }]);
+  await send('touchEnd', []); await sleep(300);
+  const v3 = await view();
+  check('drag right on the right side = look right (yaw decreases)', v3[2] < v2[2] - 0.3, JSON.stringify([v2[2], v3[2]]));
+  check('drag up = look up (pitch increases)', v3[3] > v2[3] + 0.2, JSON.stringify([v2[3], v3[3]]));
+  const mb = await p.$('.v3d-music');
+  const m0 = await mb.evaluate((e) => e.textContent);
+  await mb.click(); const m1 = await mb.evaluate((e) => e.textContent);
+  await mb.click();
+  check('music button toggles (and the music exists)', m0 !== m1 && !(await mb.evaluate((e) => e.hidden)), `${m0} -> ${m1}`);
   await p.tap('.v3d-close'); await sleep(300);
   check('3D closes', !(await p.$('.v3d')));
   }
