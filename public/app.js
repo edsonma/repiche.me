@@ -141,7 +141,8 @@ createApp({
     async function refresh() {
       if (loading.value || sending.value) return;
       try {
-        const w = await api(`/api/walls/${encodeURIComponent(slug.value)}`);
+        const lastId = posts.value.reduce((m, p) => Math.max(m, p.id), 0); // only ask for what's new
+        const w = await api(`/api/walls/${encodeURIComponent(slug.value)}?after=${lastId}`);
         const known = new Set(posts.value.map((p) => p.id));
         const incoming = w.posts.filter((p) => !known.has(p.id));
         if (incoming.length) posts.value = [...posts.value, ...incoming];
