@@ -241,3 +241,31 @@ button:disabled { opacity: .5; cursor: wait; }
 .v3d-jump { position: absolute; right: 24px; bottom: 40px; z-index: 2; width: 64px; height: 64px; border-radius: 50%; border: 2px solid #fff7; background: #0005; color: #fff; font-size: 26px; touch-action: none; padding: 0; cursor: pointer; }
 .v3d-music { position: absolute; top: 12px; right: 66px; z-index: 2; width: 44px; height: 44px; border-radius: 10px; border: 1px solid #fff6; background: #000a; color: #fff; font-size: 20px; cursor: pointer; padding: 0; }
 .v3d-music[hidden] { display: none; }
+
+/* 3D: talking to the lost visitor */
+.v3d-talk { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 3; padding: 11px 18px; border-radius: 999px; border: 2px solid #fff; background: #ff5a3c; color: #fff; font: 700 16px system-ui, sans-serif; cursor: pointer; box-shadow: 0 4px 16px #0006; animation: talkpulse 1.4s ease-in-out infinite; }
+.v3d-talk[hidden], .v3d-bubble[hidden], .v3d-cardwrap[hidden] { display: none; }
+.v3d-talk kbd { background: #0004; border-radius: 4px; padding: 1px 6px; margin-left: 4px; font: inherit; }
+@keyframes talkpulse { 50% { transform: translateX(-50%) scale(1.06); } }
+.v3d-bubble { position: absolute; left: 50%; bottom: 96px; transform: translateX(-50%); z-index: 4; width: min(420px, calc(100% - 24px)); background: #fff; color: #222; border-radius: 18px; padding: 14px 16px 12px; box-shadow: 0 8px 30px #0007; font: 15px/1.35 system-ui, sans-serif; }
+.v3d-bubble::after { content: ''; position: absolute; left: 50%; bottom: -14px; margin-left: -14px; border: 14px solid transparent; border-bottom: 0; border-top-color: #fff; } /* the speech-bubble tail, pointing down to him */
+.v3d-bubble .who { margin: 0 0 2px; font-size: 12px; font-weight: 700; color: #c2370f; text-transform: uppercase; letter-spacing: .04em; }
+.v3d-bubble .q { margin: 0 0 10px; font-weight: 600; font-size: 16px; }
+.v3d-bubble button { display: block; width: 100%; text-align: left; margin: 6px 0 0; padding: 9px 12px; border: 1px solid #ddd; border-radius: 12px; background: #f6f6f6; color: #222; font: inherit; cursor: pointer; }
+.v3d-bubble button:hover, .v3d-bubble button:focus-visible { background: #ffe9e3; border-color: #ff5a3c; }
+.v3d-bubble button b { display: inline-block; min-width: 1.4em; color: #ff5a3c; }
+.v3d-cardwrap { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: #0008; padding: 12px; }
+.v3d-card { width: min(640px, 100%); max-height: calc(100% - 8px); overflow: auto; background: #fff; color: #222; border-radius: 16px; padding: 20px 22px; box-shadow: 0 10px 40px #000a; font: 15px/1.4 system-ui, sans-serif; }
+.v3d-card h2 { margin: 4px 0 12px; font-size: 22px; }
+.v3d-card .react { margin: 0 0 6px; padding: 10px 14px; background: #fff4d6; border-radius: 14px; font-style: italic; }
+.v3d-card .members { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; }
+.v3d-card .member { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border: 1px solid #e3e3e3; border-radius: 12px; background: #fafafa; }
+.v3d-card .member b { font-size: 16px; }
+.v3d-card .member .role { color: #c2370f; font-weight: 600; font-size: 14px; }
+.v3d-card .member .note { font-size: 13px; color: #555; }
+.v3d-card .member .src { font-size: 12px; color: #888; margin-top: 2px; }
+.v3d-card .facts { margin: 14px 0 6px; font-size: 14px; color: #444; }
+.v3d-card .refs { margin: 0 0 14px; font-size: 13px; }
+.v3d-card .refs a { color: #c2370f; }
+.v3d-card .closecard { display: block; margin-left: auto; padding: 9px 20px; border: 0; border-radius: 10px; background: #ff5a3c; color: #fff; font: 700 15px system-ui, sans-serif; cursor: pointer; }
+@media (max-width: 520px) { .v3d-talk { bottom: 188px; } .v3d-bubble { bottom: 168px; } }

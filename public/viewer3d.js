@@ -140,6 +140,32 @@ function glowTexture() {
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
 }
 
+// ---------- the lost visitor's conversation ----------
+const QUESTION = 'Onde está a galera original do piche.me? Procurei o dia todo e não achei ninguém…';
+const ANSWERS = [
+  { t: 'Brigaram.', r: 'Brigaram?! Não encontrei registro nenhum disso… 😅 Mas olha só quem fez parte:' },
+  { t: 'Cada um foi resolver sua vida.', r: 'Pode ser! A vida adulta chega pra todo mundo. Olha só quem fez parte:' },
+  { t: 'Moram juntos.', r: 'Moram juntos?! Que república seria essa! 😂 Também não achei nada disso. Olha a galera:' },
+  { t: 'Nenhuma das anteriores.', r: 'Hm… então o mistério continua. Mas pelo menos sei quem eram:' },
+];
+// Only what the sources say: Correio Braziliense (2011) and the deriva~telar article (FAU-USP).
+// The other four are named as part of the original team; no role is known, so none is invented.
+const MEMBERS = [
+  { name: 'Túlio Ornelas', role: 'Engenheiro de software e um dos fundadores', note: 'A ideia surgiu ao assistir a um documentário sobre a queda do Muro de Berlim.', src: 'Correio Braziliense, 2011' },
+  { name: 'Wesley Rocha', role: 'Designer de interfaces', note: 'Falou ao jornal sobre os planos de ampliar os recursos de rede social do site.', src: 'Correio Braziliense, 2011' },
+  { name: 'Renan', role: 'Integrante da equipe original', note: 'Cargo não informado nas fontes consultadas.', src: 'Equipe do piche.me' },
+  { name: 'Karina Macedo', role: 'Integrante da equipe original', note: 'Cargo não informado nas fontes consultadas.', src: 'Equipe do piche.me' },
+  { name: 'Rodrigo Ramalho', role: 'Integrante da equipe original', note: 'Cargo não informado nas fontes consultadas.', src: 'Equipe do piche.me' },
+  { name: 'Celio Latorraca', role: 'Integrante da equipe original', note: 'Cargo não informado nas fontes consultadas.', src: 'Equipe do piche.me' },
+];
+const FACTS = 'Criado em 2011 por um grupo de amigos de Brasília, num único fim de semana. Segundo os perfis de LinkedIn dos criadores, o site saiu do ar em 2015. Não há fonte pública dizendo onde cada um está hoje.';
+const REFS = [
+  ['Correio Braziliense (2011)', 'https://www.correiobraziliense.com.br/app/noticia/tecnologia/2011/07/01/interna_tecnologia,259239/site-permite-que-internautas-deixem-mensagem-em-muros-vira-febre-na-rede.shtml'],
+  ['deriva~telar, FAU-USP', 'https://deriva-telar.fau.usp.br/piche-me/'],
+  ['piche.me em 26/10/2011 (Web Archive)', 'http://web.archive.org/web/20111026051021/http://piche.me/'],
+];
+const esc = (v) => String(v).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
 // ---------- happy background music ----------
 // An original little tune synthesized live with the Web Audio API: no audio files, no samples and no
 // existing song, so there is nothing to license. C major, 118 bpm, 8-bar loop (square lead, triangle
@@ -215,6 +241,9 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   root.innerHTML = `
     <div class="v3d-msg">Carregando o muro…</div>
     <button class="v3d-close" aria-label="Sair do 3D" title="Sair (Esc)">✕</button>
+    <button class="v3d-talk" hidden>💬 Falar com ele${isTouch ? '' : ' <kbd>E</kbd>'}</button>
+    <div class="v3d-bubble" hidden></div>
+    <div class="v3d-cardwrap" hidden></div>
     <button class="v3d-music" aria-label="Música" title="Música ligada/desligada">🔊</button>
     <div class="v3d-hint">${isTouch ? 'Círculo à esquerda: andar · arraste à direita: olhar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
     ${isTouch ? '<div class="v3d-joy" aria-label="Andar"><div class="knob"></div></div><button class="v3d-jump" aria-label="Pular">⤒</button>' : ''}`;
@@ -360,7 +389,12 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     grp.position.set(NPC_X, 0, NPC_Z); scene.add(grp);
     blockers.push({ x: NPC_X, z: NPC_Z, r: 0.6 });
     return {
-      update(t) { // looks left and right (can't find anyone), shrugs, the ? bobs
+      update(t, talking = false, px = 0, pz = 0) { // looks left and right (can't find anyone), shrugs, the ? bobs
+        if (talking) { // turns to you and waves his arms while you talk
+          grp.rotation.y = Math.atan2(px - NPC_X, pz - NPC_Z); head.rotation.y = 0; head.rotation.x = 0.08;
+          armL.rotation.z = 0.9 + Math.sin(t * 6) * 0.25; armR.rotation.z = -0.9 - Math.sin(t * 6 + 1) * 0.25;
+          q2.position.y = 2.45 + Math.sin(t * 3) * 0.08; return;
+        }
         head.rotation.y = Math.sin(t * 1.25) * 1.05; head.rotation.x = Math.sin(t * 0.6) * 0.12;
         grp.rotation.y = Math.sin(t * 0.45) * 0.5;
         armL.rotation.z = 0.55 + Math.max(0, Math.sin(t * 1.25)) * 0.5; armR.rotation.z = -0.55 - Math.max(0, -Math.sin(t * 1.25)) * 0.5;
@@ -382,7 +416,12 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   const KEYMAP = { arrowleft: 'left', a: 'left', arrowright: 'right', d: 'right', arrowup: 'up', w: 'up', arrowdown: 'down', s: 'down', shift: 'sprint', ' ': 'jump' };
   let locked = false;
   const onKey = (e, down) => {
-    if (e.key === 'Escape') { if (down && !locked) close(); return; } // while the mouse is captured, Esc just releases it
+    if (e.key === 'Escape') { // while the mouse is captured, Esc just releases it; an open conversation closes first
+      if (down) { if (talk) closeTalk(); else if (!locked) close(); }
+      return;
+    }
+    if (down && talk === 'ask' && /^[1-4]$/.test(e.key)) { answer(Number(e.key) - 1); return; }
+    if (down && !talk && nearNpc && e.key.toLowerCase() === 'e') { e.preventDefault(); openTalk(); return; }
     const k2 = KEYMAP[e.key.toLowerCase()];
     if (k2) { e.preventDefault(); down ? keys.add(k2) : keys.delete(k2); }
   };
@@ -408,6 +447,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
   document.addEventListener('mousemove', onMouse);
   let drag = null;
   cvs.addEventListener('pointerdown', (e) => {
+    if (talk) return;
     if (e.pointerType === 'mouse' && cvs.requestPointerLock) { try { cvs.requestPointerLock(); } catch { /* ignore */ } return; }
     drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; cvs.setPointerCapture(e.pointerId);
   });
@@ -464,6 +504,35 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     });
     root.addEventListener('pointerdown', () => music.resume()); // iOS only starts audio inside a touch
   }
+  // ---- talking to the lost visitor ----
+  let talk = null;      // null | 'ask' (speech bubble) | 'card' (the big window)
+  let nearNpc = false;
+  const talkBtn = root.querySelector('.v3d-talk'), bubble = root.querySelector('.v3d-bubble'), cardWrap = root.querySelector('.v3d-cardwrap');
+  function openTalk() {
+    if (talk) return;
+    talk = 'ask'; keys.clear(); joy.x = joy.y = joy.mag = 0;
+    if (document.pointerLockElement) document.exitPointerLock();
+    bubble.innerHTML = `<p class="who">Visitante perdido</p><p class="q">${esc(QUESTION)}</p>` +
+      ANSWERS.map((a, i) => `<button type="button" data-i="${i}"><b>${i + 1}</b> ${esc(a.t)}</button>`).join('');
+    bubble.hidden = false; talkBtn.hidden = true; dirty = true;
+  }
+  function answer(i) {
+    if (talk !== 'ask') return;
+    talk = 'card'; bubble.hidden = true;
+    cardWrap.innerHTML = `<div class="v3d-card" role="dialog" aria-label="A galera do piche.me">
+      <p class="react">“${esc(ANSWERS[i].r)}”</p>
+      <h2>A galera do piche.me</h2>
+      <div class="members">${MEMBERS.map((m) => `<div class="member"><b>${esc(m.name)}</b><span class="role">${esc(m.role)}</span><span class="note">${esc(m.note)}</span><span class="src">Fonte: ${esc(m.src)}</span></div>`).join('')}</div>
+      <p class="facts">${esc(FACTS)}</p>
+      <p class="refs">${REFS.map(([t, u]) => `<a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(t)}</a>`).join(' · ')}</p>
+      <button type="button" class="closecard">Fechar</button></div>`;
+    cardWrap.hidden = false; dirty = true;
+  }
+  function closeTalk() { talk = null; bubble.hidden = true; cardWrap.hidden = true; talkBtn.hidden = !nearNpc; dirty = true; }
+  talkBtn.addEventListener('click', openTalk);
+  bubble.addEventListener('click', (e) => { const b = e.target.closest('button[data-i]'); if (b) answer(Number(b.dataset.i)); });
+  cardWrap.addEventListener('click', (e) => { if (e.target === cardWrap || e.target.closest('.closecard')) closeTalk(); });
+
   root.querySelector('.v3d-close').addEventListener('click', () => { if (document.pointerLockElement) document.exitPointerLock(); close(); });
 
   // walk relative to where you look. You can look anywhere, but can't leave the front of the wall,
@@ -486,8 +555,8 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     raf = requestAnimationFrame(frame);
     if (document.hidden) return;
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
-    let sx = (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0) + joy.x;
-    let fz = (keys.has('up') ? 1 : 0) - (keys.has('down') ? 1 : 0) + joy.y;
+    let sx = talk ? 0 : (keys.has('right') ? 1 : 0) - (keys.has('left') ? 1 : 0) + joy.x; // standing still while talking
+    let fz = talk ? 0 : (keys.has('up') ? 1 : 0) - (keys.has('down') ? 1 : 0) + joy.y;
     const nn = Math.hypot(sx, fz); if (nn > 1) { sx /= nn; fz /= nn; } // never faster diagonally
     const spd = SPEED * (keys.has('sprint') || joy.mag > 0.92 ? 1.8 : 1);
     if (sx || fz) move(sx * spd * dt, fz * spd * dt);
@@ -496,7 +565,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     if (st.h > 0 || st.vy > 0) { st.vy -= 16 * dt; st.h = Math.max(0, st.h + st.vy * dt); if (st.h === 0) st.vy = 0; dirty = true; }
     cloudAcc += dt;
     if (cloudAcc > 1 / 15) { // clouds drift and the guy looks around; ~15 fps is plenty
-      npc.update(now / 1000);
+      npc.update(now / 1000, !!talk, st.x, st.z);
       for (const c of cloudData) { c.x += cloudAcc * 1.2; if (c.x > CLOUD_RANGE + 30) c.x -= CLOUD_RANGE * 2 + 60; }
       writeClouds(); cloudAcc = 0; dirty = true;
     }
@@ -507,6 +576,8 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     sun.position.set(snap + sunDir.x * 30, sunDir.y * 30, sunDir.z * 30); sun.target.position.set(snap, 1, 0); sun.target.updateMatrixWorld();
     camera.rotation.set(st.pitch, st.yaw, 0);
     skyGroup.position.copy(camera.position);
+    const near = Math.hypot(st.x - NPC_X, st.z - NPC_Z) < 3.4; // close enough to chat
+    if (near !== nearNpc) { nearNpc = near; talkBtn.hidden = !near || !!talk; }
     root.dataset.view = [st.x, st.z, st.yaw, st.pitch].map((v) => v.toFixed(3)).join(','); // read by the tests
     renderer.render(scene, camera);
     dirty = false;
