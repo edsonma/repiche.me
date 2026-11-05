@@ -246,6 +246,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     <button class="v3d-talk" hidden>💬 Falar com ele${isTouch ? '' : ' <kbd>E</kbd>'}</button>
     <div class="v3d-bubble" hidden></div>
     <div class="v3d-cardwrap" hidden></div>
+    ${cityData ? '<button class="v3d-turn" title="Virar entre o muro e a rua">🏙 Ver a rua</button>' : ''}
     <button class="v3d-music" aria-label="Música" title="Música ligada/desligada">🔊</button>
     ${place ? '<div class="v3d-place"></div>' : ''}
     ${cityData ? '<div class="v3d-osm">Mapa © colaboradores do OpenStreetMap (ODbL)</div>' : ''}
@@ -367,6 +368,11 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
   // Two merged meshes only. Anything that would overlap the wall and its walkway is left out, so the
   // wall stands in a clearing of the real neighbourhood.
   if (cityData && Array.isArray(cityData.b)) {
+    const ZSHIFT = 16; // the map is moved so its centre is on the far edge of the walkway: the street lies in front of you, behind your back
+    // The wall's side of the map is hidden behind the wall, so turn the map 180 degrees if its busier half is there
+    const heavy = (a) => a.reduce((n, [, p]) => n + (Array.isArray(p) && p.length > 1 && p[1] > 0 ? 1 : -1), 0);
+    const FLIP = heavy(cityData.b) < 0 ? -1 : 1;
+    const place2 = (pts) => pts.map((n, i) => (i % 2 ? FLIP * n + ZSHIFT : FLIP * n));
     const zone = { x0: -Wm / 2 - 6, x1: Wm / 2 + 6, z0: -3, z1: 16 };
     const inZone = (x, z) => x > zone.x0 && x < zone.x1 && z > zone.z0 && z < zone.z1;
     const num = (n) => typeof n === 'number' && Number.isFinite(n);
@@ -380,9 +386,10 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
       g.dispose(); if (g2 !== g) g2.dispose();
     };
     const pal = [0xd9c8a9, 0xc9b79c, 0xe2d6c1, 0xb9a58a, 0xd4b8a0, 0xcfd2c4, 0xc7a9a0];
-    for (const [h, pts] of cityData.b.slice(0, 500)) {
+    for (let [h, pts] of cityData.b.slice(0, 500)) {
       if (!num(h) || !Array.isArray(pts) || pts.length < 6 || pts.length > 80 || !pts.every(num)) continue;
       let xs = 0, zs = 0;
+      pts = place2(pts);
       for (let i = 0; i < pts.length; i += 2) { xs += pts[i]; zs += pts[i + 1]; }
       const cx = xs / (pts.length / 2), cz = zs / (pts.length / 2);
       let hit = inZone(cx, cz);
@@ -407,8 +414,9 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     }
     // roads: one flat quad per segment, slightly above the grass
     const rp = [];
-    for (const [w, pts] of (cityData.r || []).slice(0, 200)) {
+    for (let [w, pts] of (cityData.r || []).slice(0, 200)) {
       if (!num(w) || !Array.isArray(pts) || pts.length < 4 || pts.length > 80 || !pts.every(num)) continue;
+      pts = place2(pts);
       const half = Math.min(6, Math.max(0.5, w / 2));
       for (let i = 0; i + 3 < pts.length; i += 2) {
         const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
@@ -572,6 +580,15 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     const up = () => keys.delete('jump');
     jumpEl.addEventListener('pointerup', up); jumpEl.addEventListener('pointercancel', up);
   }
+
+  // with a street scene: one button turns you around between the wall and the street behind you
+  const turnBtn = root.querySelector('.v3d-turn');
+  if (turnBtn) turnBtn.addEventListener('click', () => {
+    const toStreet = Math.abs(Math.atan2(Math.sin(st.yaw), Math.cos(st.yaw))) < Math.PI / 2;
+    st.yaw = toStreet ? Math.PI : 0; st.pitch = toStreet ? 0.12 : 0.05;
+    turnBtn.textContent = toStreet ? '🧱 Ver o muro' : '🏙 Ver a rua';
+    dirty = true;
+  });
 
   // music (original, synthesized): starts with the view, can be muted; the choice is remembered
   const music = createMusic();
