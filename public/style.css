@@ -290,3 +290,25 @@ button:disabled { opacity: .5; cursor: wait; }
 .mapmodal .map { height: min(60vh, 460px); border-radius: 8px; margin: 8px 0; background: #dde; }
 .wallpin span { display: block; width: 18px; height: 18px; margin: 2px; border-radius: 50% 50% 50% 0; background: #ff5a3c; border: 2px solid #fff; box-shadow: 0 1px 4px #0006; transform: rotate(-45deg); }
 .v3d-place { position: absolute; left: 12px; top: 12px; z-index: 2; color: #fff; font: 600 14px system-ui, sans-serif; background: #0007; padding: 5px 10px; border-radius: 8px; pointer-events: none; }
+
+/* photo of the place as the wall surface */
+.stage.has-photo { background-image: linear-gradient(#0000002e, #0000002e), var(--photo); background-size: cover, cover; background-position: center; background-attachment: fixed; }
+.photoopt { display: flex; gap: 6px; align-items: center; font-size: 13px; }
+.photocredit { position: fixed; left: 8px; bottom: 4px; z-index: 4; font: 11px system-ui, sans-serif; color: #fff; background: #0008; padding: 2px 8px; border-radius: 6px; pointer-events: none; }
+
+/* ---- modo clássico: flat, early-2010s page chrome (the wall itself is unchanged) ---- */
+.classic, .classic .topbar, .classic .compose, .classic .modal { font-family: Verdana, Tahoma, Arial, sans-serif; }
+.classic .topbar { background: #3b5998; backdrop-filter: none; border-bottom: 1px solid #29447e; padding: 6px 12px; }
+.classic .logo { font: 700 20px Verdana, Arial, sans-serif; letter-spacing: -1px; }
+.classic .logo span { color: #dfe3ee; }
+.classic .wall-name { font-size: 12px; }
+.classic .actions button, .classic .more, .classic .compose button, .classic .modal button:not(.swatch):not(.chip):not(.tile):not(.dot):not(.secondary) {
+  background: linear-gradient(#f7f7f7, #dcdcdc); color: #333; border: 1px solid #999; border-radius: 3px; font: 700 11px Verdana, Arial, sans-serif; padding: 4px 9px; text-shadow: 0 1px 0 #fff;
+}
+.classic .actions button.outline { background: linear-gradient(#6d84b4, #4a6aa5); color: #fff; border-color: #29447e; text-shadow: 0 -1px 0 #29447e; }
+.classic .actions button.icon3d { color: #333; }
+.classic .compose { background: #eceff5; border-top: 1px solid #b3bfd8; color: #333; }
+.classic .compose input:not([type=range]):not([type=checkbox]) { border: 1px solid #bdc7d8; border-radius: 0; background: #fff; }
+.classic .modal { background: #fff; color: #333; border: 1px solid #555; border-radius: 0; box-shadow: 0 3px 8px rgba(0,0,0,.5); }
+.classic .modal h2 { background: #6d84b4; color: #fff; margin: -24px -24px 14px; padding: 6px 10px; font-size: 13px; }
+.classic .zoombar button { border-radius: 3px; }

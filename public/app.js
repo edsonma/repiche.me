@@ -36,6 +36,9 @@ createApp({
     }
     const draft = reactive({ text: '', font: 'Permanent Marker', color: '#ffffff', size: 28, bold: false, sig: store.get('repiche.sig') || '' });
     const showNav = ref(false);
+    // "modo clássico": a flat, early-2010s look for the page chrome (remembered in this browser)
+    const classic = ref(store.get('repiche.classic') === '1');
+    const toggleClassic = () => { classic.value = !classic.value; store.set('repiche.classic', classic.value ? '1' : '0'); };
     const showCredits = ref(false);
     const walls = ref([]);
     const newSlug = ref('');
@@ -56,6 +59,10 @@ createApp({
     const setupPlace = ref('');
     const geoBusy = ref(false);
     const wallGeo = ref(null);         // place of the wall being viewed
+    const setupPhoto = ref(false);     // use an open photo of the place as the surface
+    const wallPhoto = ref(null);       // { creator, year } when this wall's surface is a photo
+    const photoUrl = computed(() => (wallPhoto.value ? `/api/walls/${encodeURIComponent(slug.value)}/photo` : ''));
+    const photoCredit = computed(() => (wallPhoto.value ? `Foto: ${wallPhoto.value.creator || 'colaborador'}${wallPhoto.value.year ? ' (' + wallPhoto.value.year + ')' : ''} / Mapillary, CC BY-SA 4.0` : ''));
     function useLocation() {
       setupError.value = '';
       if (!navigator.geolocation) { setupError.value = 'Seu navegador não informa a localização.'; return; }
@@ -65,7 +72,7 @@ createApp({
         () => { geoBusy.value = false; setupError.value = 'Não consegui pegar sua localização (permissão negada?).'; },
         { maximumAge: 600000, timeout: 15000 });
     }
-    const clearLocation = () => { setupGeo.value = null; setupPlace.value = ''; };
+    const clearLocation = () => { setupGeo.value = null; setupPlace.value = ''; setupPhoto.value = false; };
 
     // ---- map of walls that have a place (OpenStreetMap tiles via Leaflet, served from our own server) ----
     const showMap = ref(false);
@@ -119,6 +126,7 @@ createApp({
           posts: visiblePosts.value.map((p) => ({ ...p })),
           opacity: (p) => fade(p),
           background: { ...background.value },
+          photoUrl: photoUrl.value,
           place: wallGeo.value && wallGeo.value.place || '',
           wallW: baseW.value, wallH: wallH.value, fonts: meta.fonts || [],
           onClose: () => { viewer3d = null; },
@@ -226,6 +234,7 @@ createApp({
         selectedId.value = null;
         wallSetup.value = w.setup !== false;
         wallGeo.value = w.geo || null;
+        wallPhoto.value = w.photo || null;
         clearLocation();
         setupDismissed.value = false;
         setupError.value = ''; existsName.value = '';
@@ -419,9 +428,10 @@ createApp({
         const made = await api(`/api/walls/${encodeURIComponent(name)}/setup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ background: background.value, ...(setupGeo.value ? { geo: { ...setupGeo.value, place: setupPlace.value.trim() } } : {}) }),
+          body: JSON.stringify({ background: background.value, ...(setupGeo.value ? { geo: { ...setupGeo.value, place: setupPlace.value.trim() } } : {}), ...(setupGeo.value && setupPhoto.value ? { photo: true } : {}) }),
         });
-        if (name === slug.value) { wallSetup.value = true; wallGeo.value = (made && made.geo) || null; } // same URL: just close the popup
+        if (made && made.photoNote) error.value = made.photoNote;
+        if (name === slug.value) { wallSetup.value = true; wallGeo.value = (made && made.geo) || null; wallPhoto.value = (made && made.photo) || null; } // same URL: just close the popup
         else go(name);                                    // new name: open that wall
       } catch (e) {
         // that wall already exists: don't make the person read an error, just take them there
@@ -491,7 +501,7 @@ createApp({
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
       visiblePosts, selectedId, toggleSelect, support, isSupported, timeLeft,
-      setupGeo, setupPlace, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapEl, mapWalls, openMap, closeMap,
+      classic, toggleClassic, setupGeo, setupPlace, setupPhoto, wallPhoto, photoUrl, photoCredit, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapEl, mapWalls, openMap, closeMap,
       opening3d, open3D, palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,

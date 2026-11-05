@@ -9,6 +9,14 @@ const PORT = process.env.PORT || 3000;
 const DATA_DIR =
   process.env.DATA_DIR || process.env.RAILWAY_VOLUME_MOUNT_PATH || path.join(__dirname, 'data');
 const DATA_FILE = path.join(DATA_DIR, 'db.json');
+const PHOTO_DIR = path.join(DATA_DIR, 'photos');
+// Optional "photo of the place" for a wall's surface, from Mapillary (open street-level photos, CC BY-SA 4.0).
+// Needs a free client token (MAPILLARY_TOKEN). Without it the option simply does not appear.
+// MAPILLARY_API / MAPILLARY_HOSTS exist so tests can point at a fake upstream.
+const MAPILLARY_TOKEN = process.env.MAPILLARY_TOKEN || '';
+const MAPILLARY_API = process.env.MAPILLARY_API || 'https://graph.mapillary.com';
+const MAPILLARY_HOSTS = (process.env.MAPILLARY_HOSTS || 'fbcdn.net,mapillary.com').split(',');
+const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
 
 // ---- Limits / whitelists -------------------------------------------------
 const MAX_TEXT = 140;
@@ -256,7 +264,7 @@ app.use('/vendor/vue.js', (req, res) =>
 );
 
 app.get('/api/meta', (req, res) =>
-  res.json({ fonts: FONTS, textures: TEXTURES, presets: PRESETS, maxText: MAX_TEXT, wallWidth: WALL_W })
+  res.json({ fonts: FONTS, textures: TEXTURES, presets: PRESETS, maxText: MAX_TEXT, wallWidth: WALL_W, photos: !!MAPILLARY_TOKEN })
 );
 
 // ---- Places -------------------------------------------------------------------
@@ -273,6 +281,40 @@ function normalizeGeo(g) {
     : '';
   return { lat: Math.round(lat * 100) / 100, lon: Math.round(lon * 100) / 100, ...(name ? { place: name } : {}) };
 }
+
+// Fetch one open photo near a (rounded) place and keep it on our disk, so visitors never talk to Mapillary
+// and the image can't change under us. Only https URLs on Mapillary's own hosts are followed (no SSRF).
+async function fetchPlacePhoto(slug, geo) {
+  const d = 0.01;
+  const q = new URLSearchParams({
+    fields: 'id,thumb_1024_url,creator,captured_at',
+    bbox: [geo.lon - d, geo.lat - d, geo.lon + d, geo.lat + d].join(','),
+    limit: '10',
+    access_token: MAPILLARY_TOKEN,
+  });
+  const ok = (r) => r && r.ok;
+  const r1 = await fetch(`${MAPILLARY_API}/images?${q}`, { signal: AbortSignal.timeout(8000) });
+  if (!ok(r1)) throw new Error('mapillary list ' + r1.status);
+  const list = ((await r1.json()).data || []);
+  const pick = list.find((i) => {
+    try { const u = new URL(i.thumb_1024_url); return (u.protocol === 'https:' || process.env.MAPILLARY_API) && MAPILLARY_HOSTS.some((h) => u.hostname === h || u.hostname.endsWith('.' + h)); } catch { return false; }
+  });
+  if (!pick) return null;
+  const r2 = await fetch(pick.thumb_1024_url, { signal: AbortSignal.timeout(10000), redirect: 'error' });
+  if (!ok(r2)) throw new Error('photo ' + r2.status);
+  const buf = Buffer.from(await r2.arrayBuffer());
+  if (buf.length > MAX_PHOTO_BYTES || buf.length < 1000 || buf[0] !== 0xff || buf[1] !== 0xd8) throw new Error('not a jpeg');
+  fs.mkdirSync(PHOTO_DIR, { recursive: true });
+  fs.writeFileSync(path.join(PHOTO_DIR, slug + '.jpg'), buf);
+  const creator = ((pick.creator && pick.creator.username) || '').replace(/[^\p{L}\p{N} ._-]/gu, '').slice(0, 40);
+  return { id: String(pick.id).replace(/\D/g, '').slice(0, 20), creator, year: pick.captured_at ? new Date(pick.captured_at).getUTCFullYear() : null };
+}
+app.get('/api/walls/:slug/photo', (req, res) => {
+  const slug = req.params.slug.toLowerCase();
+  const w = validSlug(slug) && db.walls[slug];
+  if (!w || !w.photo) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=86400').type('image/jpeg').sendFile(path.join(PHOTO_DIR, slug + '.jpg'), (e) => { if (e && !res.headersSent) res.status(404).end(); });
+});
 
 // Walls that have a place (for the map)
 app.get('/api/map', (req, res) => {
@@ -320,6 +362,7 @@ app.get('/api/walls/:slug', (req, res) => {
     posts: wall.posts.filter((p) => isAlive(p) && (!Number.isFinite(after) || p.id > after)).map(pub),
     setup: !!wall.setup,
     ...(wall.geo ? { geo: wall.geo } : {}),
+    ...(wall.photo ? { photo: wall.photo } : {}),
   });
 });
 
@@ -331,7 +374,7 @@ app.post('/api/walls/:slug/background', (req, res) =>
 // Creation step: pick the name (the URL) and the look before the first scribble.
 // 409 if that wall already exists, so nobody can overwrite someone else's wall this way.
 const RESERVED = new Set(['api', 'health', 'vendor', 'home', ...BAD_SLUGS]);
-app.post('/api/walls/:slug/setup', setupLimit, (req, res) => {
+app.post('/api/walls/:slug/setup', setupLimit, async (req, res) => {
   const slug = req.params.slug.toLowerCase();
   if (!validSlug(slug)) {
     return res.status(400).json({ error: 'Nome inválido. Use letras, números, - ou _ (até 30).' });
@@ -345,11 +388,22 @@ app.post('/api/walls/:slug/setup', setupLimit, (req, res) => {
   if (existing && existing.setup) return res.status(409).json({ error: 'Esse muro já existe.' });
   const wall = getWall(slug, true);
   if (!wall) return res.status(503).json({ error: 'Muitos muros criados. Tente mais tarde.' });
+  // optional photo of the place as the wall surface (needs a place and a Mapillary token)
+  let photoNote;
+  let photo = null;
+  if ((req.body || {}).photo === true) {
+    if (!geo || !MAPILLARY_TOKEN) return res.status(400).json({ error: 'Foto do lugar indisponível.' });
+    try { photo = await fetchPlacePhoto(slug, geo); if (!photo) photoNote = 'Não achei fotos abertas perto desse lugar. O muro foi criado com a textura escolhida.'; }
+    catch (e) { console.error('photo:', e.message); photoNote = 'Não consegui buscar a foto agora. O muro foi criado com a textura escolhida.'; }
+  }
+  const again = db.walls[slug]; // someone may have created it while we were fetching
+  if (again && again.setup) return res.status(409).json({ error: 'Esse muro já existe.' });
   wall.background = bg;
   if (geo) wall.geo = geo;
+  if (photo) wall.photo = photo;
   wall.setup = true;
   save();
-  res.status(201).json({ slug, background: wall.background, ...(wall.geo ? { geo: wall.geo } : {}) });
+  res.status(201).json({ slug, background: wall.background, ...(wall.geo ? { geo: wall.geo } : {}), ...(wall.photo ? { photo: wall.photo } : {}), ...(photoNote ? { photoNote } : {}) });
 });
 
 app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {

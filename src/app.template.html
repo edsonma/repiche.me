@@ -1,6 +1,6 @@
 <!-- Vue template of the whole page. Compiled to a render function when the server starts
      (served as /render.js), so the browser never needs eval / the Vue compiler. -->
-    <div class="stage" :class="'tx-' + background.texture" :style="{ '--wall': background.color }">
+    <div class="stage" :class="[wallPhoto ? 'has-photo' : 'tx-' + background.texture, classic ? 'classic' : '']" :style="{ '--wall': background.color, '--photo': photoUrl ? 'url(' + photoUrl + ')' : 'none' }">
 
       <header class="topbar">
         <a class="logo" href="/" @click.prevent="go('home')">repiche<span>.me</span></a>
@@ -8,6 +8,7 @@
         <div class="actions">
           <button @click="showNav = true">muros</button>
           <button class="outline" @click="openMap">mapa</button>
+          <button class="outline" @click="toggleClassic" :aria-pressed="classic" title="Visual clássico">{{ classic ? 'moderno' : 'clássico' }}</button>
           <button class="outline" @click="showCredits = true">créditos</button>
           <button class="icon3d" @click="open3D" :disabled="opening3d" title="Ver o muro em 3D" aria-label="Ver o muro em 3D">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5 3.5 7v10L12 21.5 20.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
@@ -127,6 +128,7 @@
             <template v-else>
               <input v-model="setupPlace" maxlength="40" placeholder="Nome do lugar (ex.: Praça da Sé)" autocomplete="off" aria-label="Nome do lugar">
               <small>Região aprox. {{ setupGeo.lat }}, {{ setupGeo.lon }} · <a href="#" @click.prevent="clearLocation">remover</a></small>
+              <label class="photoopt" v-if="meta.photos"><input type="checkbox" v-model="setupPhoto"> Usar uma foto aberta do lugar como parede <small>(Mapillary, CC BY-SA)</small></label>
             </template>
           </div>
           <p class="err" v-if="setupError">{{ setupError }}
@@ -138,6 +140,8 @@
           </div>
         </div>
       </div>
+
+      <div class="photocredit" v-if="photoCredit">{{ photoCredit }}</div>
 
       <!-- wall navigation modal -->
       <div class="modal-backdrop" v-if="showNav" @click.self="showNav = false">

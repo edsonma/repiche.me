@@ -231,7 +231,7 @@ export function createMusic() {
   };
 }
 
-export async function open3D({ posts, background, wallW, wallH, fonts = [], place = '', opacity = () => 1, onClose = () => {} }) {
+export async function open3D({ posts, background, wallW, wallH, fonts = [], place = '', photoUrl = '', opacity = () => 1, onClose = () => {} }) {
   const isTouch = matchMedia('(pointer: coarse)').matches;
   const boardH = Math.min(MAX_H_PX, Math.max(MIN_H_PX, Math.ceil(wallH)));
   const Wm = wallW / PX_PER_M, Hm = boardH / PX_PER_M;
@@ -335,11 +335,25 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
   const kTex = Math.min(0.75, maxTex / Math.max(SEG_PX, boardH)); // 0.75 keeps memory low and still looks crisp
   const side = track(new THREE.MeshLambertMaterial({ color: new THREE.Color(background.color).multiplyScalar(0.7) }));
   const segCount = Math.ceil(wallW / SEG_PX);
+  // optional photo of the place: tiled along the wall (every other copy mirrored so the joins are invisible)
+  let photo = null;
+  if (photoUrl) {
+    photo = await new Promise((ok) => { const im = new Image(); im.onload = () => ok(im); im.onerror = () => ok(null); im.src = photoUrl; });
+  }
+  const paintPhoto = (ctx, x0, sw) => {
+    const tileW = boardH * (photo.width / photo.height);
+    for (let k = Math.floor(x0 / tileW); k * tileW < x0 + sw; k++) {
+      ctx.save(); ctx.translate(k * tileW - x0, 0);
+      if (k % 2) { ctx.translate(tileW, 0); ctx.scale(-1, 1); }
+      ctx.drawImage(photo, 0, 0, tileW, boardH); ctx.restore();
+    }
+    ctx.fillStyle = 'rgba(0,0,0,.18)'; ctx.fillRect(0, 0, sw, boardH);
+  };
   for (let i = 0; i < segCount; i++) {
     const x0 = i * SEG_PX, sw = Math.min(SEG_PX, wallW - x0);
     const cv = document.createElement('canvas'); cv.width = Math.round(sw * kTex); cv.height = Math.round(boardH * kTex);
     const g2 = cv.getContext('2d'); g2.scale(kTex, kTex);
-    paintSurface(g2, sw, boardH, background.texture, background.color, 7 + i);
+    if (photo) paintPhoto(g2, x0, sw); else paintSurface(g2, sw, boardH, background.texture, background.color, 7 + i);
     g2.save(); g2.translate(-x0, 0); paintScribbles(g2, posts, wallW, boardH, x0, x0 + sw, opacity); g2.restore();
     const tex = track(new THREE.CanvasTexture(cv));
     tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());

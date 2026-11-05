@@ -168,6 +168,21 @@ const J = { 'Content-Type': 'application/json' };
   check('map closes', !(await g.$('.mapmodal')));
   await g.close();
 
+  // ---------- modo clássico ----------
+  const cp = await b.newPage(); watch(cp);
+  await cp.setViewport({ width: 1000, height: 700 });
+  await cp.goto(base + '/lab', { waitUntil: 'networkidle0' });
+  check('modern look by default', !(await cp.$('.stage.classic')));
+  await cp.$$eval('.actions button', (bs) => bs.find((x) => /clássico/.test(x.textContent)).click());
+  await sleep(200);
+  check('"clássico" switches the page chrome to the flat look', !!(await cp.$('.stage.classic')) && (await cp.$eval('.topbar', (e) => getComputedStyle(e).backgroundColor)) === 'rgb(59, 89, 152)');
+  check('the wall itself is untouched (scribbles still there)', (await cp.$$('.scribble:not(.ghost)')).length >= 3);
+  await cp.reload({ waitUntil: 'networkidle0' });
+  check('choice is remembered after reload', !!(await cp.$('.stage.classic')) && (await cp.$$eval('.actions button', (bs) => bs.some((x) => /moderno/.test(x.textContent)))));
+  await cp.$$eval('.actions button', (bs) => bs.find((x) => /moderno/.test(x.textContent)).click()); await sleep(200);
+  check('"moderno" goes back', !(await cp.$('.stage.classic')));
+  await cp.close();
+
   // ---------- 3D (skipped where the browser has no WebGL) ----------
   const hasGL = await p.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2') || !!document.createElement('canvas').getContext('webgl'); } catch { return false; } });
   if (!hasGL) { console.log('SKIP  3D checks: no WebGL in this browser'); }

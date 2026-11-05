@@ -191,6 +191,42 @@ const TOKEN = 'correct-horse-battery-staple';
   check('leaflet is served locally', (await fetch(gs.base + '/vendor/leaflet/leaflet.js')).status === 200);
   await gs.stop();
 
+  // ---- Mapillary photo of the place (fake upstream; the real API is not reachable from tests) ----
+  const http = require('http');
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(3000, 1)]);
+  const hits = [];
+  const fake = http.createServer((rq, rs) => {
+    hits.push(rq.url);
+    if (rq.url.startsWith('/images')) {
+      const port = fake.address().port;
+      const data = /bbox=-?\d/.test(rq.url) && rq.url.includes('access_token=tok')
+        ? [{ id: '123456', thumb_1024_url: `http://localhost:${port}/pic.jpg`, creator: { username: 'maria<script>' }, captured_at: '2021-05-01T00:00:00Z' }] : [];
+      if (rq.url.includes('bbox=9.99')) data.length = 0; // "no photos here"
+      rs.setHeader('Content-Type', 'application/json'); return rs.end(JSON.stringify({ data }));
+    }
+    rs.setHeader('Content-Type', 'image/jpeg'); rs.end(jpeg);
+  });
+  await new Promise((ok) => fake.listen(0, ok));
+  const ms = await startServer({ env: { MAPILLARY_TOKEN: 'tok', MAPILLARY_API: `http://localhost:${fake.address().port}`, MAPILLARY_HOSTS: 'localhost' } });
+  const setupM = (slug, body) => fetch(`${ms.base}/api/walls/${slug}/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, ...body }) });
+  check('meta says photos are available when a token is set', (await (await fetch(ms.base + '/api/meta')).json()).photos === true);
+  check('a photo needs a place', (await setupM('semgeo', { photo: true })).status === 400);
+  await sleep(2200);
+  let mr = await setupM('rua', { geo: { lat: -23.55, lon: -46.63, place: 'Rua' }, photo: true });
+  let mj = await mr.json();
+  check('wall created with a photo; credit is sanitized', mr.status === 201 && mj.photo && mj.photo.id === '123456' && mj.photo.creator === 'mariascript' && mj.photo.year === 2021, JSON.stringify(mj));
+  const ph = await fetch(`${ms.base}/api/walls/rua/photo`);
+  check('photo is served from our own server as image/jpeg', ph.status === 200 && ph.headers.get('content-type') === 'image/jpeg' && (await ph.arrayBuffer()).byteLength === jpeg.length);
+  check('GET wall exposes the credit, visitors never talk to Mapillary', (await (await fetch(`${ms.base}/api/walls/rua`)).json()).photo.creator === 'mariascript' && hits.length === 2, hits.join(' '));
+  check('walls without a photo return 404 for it', (await fetch(`${ms.base}/api/walls/semgeo/photo`)).status === 404 && (await fetch(`${ms.base}/api/walls/__proto__/photo`)).status === 404);
+  await sleep(2200);
+  mr = await setupM('vazio', { geo: { lat: 10.0, lon: 10.0 }, photo: true }); mj = await mr.json();
+  check('no photos nearby: wall is still created, with a note', mr.status === 201 && !mj.photo && /fotos abertas/.test(mj.photoNote), JSON.stringify(mj));
+  await ms.stop(); fake.close();
+  const ns = await startServer();
+  check('without a token the option is off and requests for it are refused', (await (await fetch(ns.base + '/api/meta')).json()).photos === false && (await fetch(`${ns.base}/api/walls/xx/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, geo: { lat: 1, lon: 1 }, photo: true }) })).status === 400);
+  await ns.stop();
+
   // ---- persistence ----
   const dir = s.dir;
   s = await startServer({ dir });
