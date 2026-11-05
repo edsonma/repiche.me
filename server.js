@@ -216,7 +216,7 @@ const CSP = [
   "script-src 'self' 'unsafe-eval'",
   "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
-  "img-src 'self' data: blob:",
+  "img-src 'self' data: blob: https://tile.openstreetmap.org",
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
@@ -229,7 +229,7 @@ app.use((req, res, next) => {
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
-    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+    'Permissions-Policy': 'camera=(), microphone=(), geolocation=(self), payment=()',
     'Cross-Origin-Opener-Policy': 'same-origin',
   });
   if (req.secure) res.set('Strict-Transport-Security', 'max-age=15552000');
@@ -250,6 +250,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get('/vendor/three.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/three/build/three.module.min.js'))
 );
+app.use('/vendor/leaflet', express.static(path.join(__dirname, 'node_modules/leaflet/dist'), { index: false }));
 app.use('/vendor/vue.js', (req, res) =>
   res.sendFile(path.join(__dirname, 'node_modules/vue/dist/vue.runtime.global.prod.js'))
 );
@@ -257,6 +258,30 @@ app.use('/vendor/vue.js', (req, res) =>
 app.get('/api/meta', (req, res) =>
   res.json({ fonts: FONTS, textures: TEXTURES, presets: PRESETS, maxText: MAX_TEXT, wallWidth: WALL_W })
 );
+
+// ---- Places -------------------------------------------------------------------
+// A wall can optionally be tied to a place, chosen once at creation. Privacy: coordinates are rounded to
+// 2 decimals (about 1 km) before they are stored, so a wall can name a neighbourhood, never a doorstep.
+function normalizeGeo(g) {
+  if (g === undefined || g === null) return null;
+  if (typeof g !== 'object') return false;
+  const { lat, lon, place } = g;
+  if (typeof lat !== 'number' || typeof lon !== 'number' || !Number.isFinite(lat) || !Number.isFinite(lon)
+      || Math.abs(lat) > 90 || Math.abs(lon) > 180) return false;
+  const name = typeof place === 'string'
+    ? place.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40)
+    : '';
+  return { lat: Math.round(lat * 100) / 100, lon: Math.round(lon * 100) / 100, ...(name ? { place: name } : {}) };
+}
+
+// Walls that have a place (for the map)
+app.get('/api/map', (req, res) => {
+  res.json(Object.values(db.walls)
+    .filter((w) => w.setup && w.geo)
+    .map((w) => ({ slug: w.slug, lat: w.geo.lat, lon: w.geo.lon, place: w.geo.place || '', count: w.posts.filter(isAlive).length }))
+    .sort((a, b) => b.count - a.count)
+    .slice(0, 500));
+});
 
 // Recently active walls (for the navigation modal)
 app.get('/api/walls', (req, res) => {
@@ -294,6 +319,7 @@ app.get('/api/walls/:slug', (req, res) => {
     total: wall.posts.filter(isAlive).length,
     posts: wall.posts.filter((p) => isAlive(p) && (!Number.isFinite(after) || p.id > after)).map(pub),
     setup: !!wall.setup,
+    ...(wall.geo ? { geo: wall.geo } : {}),
   });
 });
 
@@ -313,14 +339,17 @@ app.post('/api/walls/:slug/setup', setupLimit, (req, res) => {
   if (RESERVED.has(slug)) return res.status(400).json({ error: 'Esse nome é reservado. Escolha outro.' });
   const bg = normalizeBackground((req.body || {}).background);
   if (!bg) return res.status(400).json({ error: 'Fundo inválido.' });
+  const geo = normalizeGeo((req.body || {}).geo);
+  if (geo === false) return res.status(400).json({ error: 'Lugar inválido.' });
   const existing = db.walls[slug];  // (null-prototype object: only real walls)
   if (existing && existing.setup) return res.status(409).json({ error: 'Esse muro já existe.' });
   const wall = getWall(slug, true);
   if (!wall) return res.status(503).json({ error: 'Muitos muros criados. Tente mais tarde.' });
   wall.background = bg;
+  if (geo) wall.geo = geo;
   wall.setup = true;
   save();
-  res.status(201).json({ slug, background: wall.background });
+  res.status(201).json({ slug, background: wall.background, ...(wall.geo ? { geo: wall.geo } : {}) });
 });
 
 app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {

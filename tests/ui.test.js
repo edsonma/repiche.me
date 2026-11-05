@@ -139,6 +139,35 @@ const J = { 'Content-Type': 'application/json' };
   check('fresh and signed are fully opaque; the dying one is faint', ops.novinha === 1 && ops['assinada antiga'] === 1 && ops['quase sumindo'] < 0.5 && ops['quase sumindo'] >= 0.15, JSON.stringify(ops));
   await q.close(); await s2.stop();
 
+  // ---------- place + map ----------
+  await sleep(2300);
+  const ctx = b.defaultBrowserContext();
+  await ctx.overridePermissions(base, ['geolocation']);
+  const g = await b.newPage(); watch(g);
+  await g.setViewport({ width: 1000, height: 800 });
+  await g.setGeolocation({ latitude: -22.9068, longitude: -43.1729 });
+  await g.goto(base + '/praia', { waitUntil: 'domcontentloaded' });
+  await g.waitForSelector('.modal.setup .placebox button');
+  check('place is optional and nothing is asked before the click', !(await g.$('.placebox input')));
+  await g.click('.placebox button');
+  await g.waitForSelector('.placebox input');
+  check('"Usar minha localização" shows the rounded area', /-22\.91, -43\.17/.test(await g.$eval('.placebox small', (e) => e.textContent)));
+  await g.type('.placebox input', 'Copacabana');
+  await g.click('.modal.setup .btns button:first-child');
+  await g.waitForSelector('.wall-name small');
+  await sleep(500);
+  check('wall name shows the place', /Copacabana/.test(await g.$eval('.wall-name', (e) => e.textContent)));
+  await g.click('.actions button.outline'); // "mapa"
+  await g.waitForSelector('.mapmodal .leaflet-container', { timeout: 15000 });
+  await g.waitForSelector('.mapmodal .wallpin', { timeout: 10000 });
+  check('map opens (Leaflet from our own server) with a pin for the wall', (await g.$$('.mapmodal .wallpin')).length === 1);
+  await g.click('.mapmodal .wallpin');
+  await g.waitForSelector('.leaflet-popup a');
+  check('pin popup links to the wall and shows the place', /Copacabana/.test(await g.$eval('.leaflet-popup', (e) => e.textContent)) && (await g.$eval('.leaflet-popup a', (a) => a.getAttribute('href'))) === '/praia');
+  await g.click('.mapmodal .close');
+  check('map closes', !(await g.$('.mapmodal')));
+  await g.close();
+
   // ---------- 3D (skipped where the browser has no WebGL) ----------
   const hasGL = await p.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2') || !!document.createElement('canvas').getContext('webgl'); } catch { return false; } });
   if (!hasGL) { console.log('SKIP  3D checks: no WebGL in this browser'); }

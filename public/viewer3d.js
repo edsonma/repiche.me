@@ -231,7 +231,7 @@ export function createMusic() {
   };
 }
 
-export async function open3D({ posts, background, wallW, wallH, fonts = [], opacity = () => 1, onClose = () => {} }) {
+export async function open3D({ posts, background, wallW, wallH, fonts = [], place = '', opacity = () => 1, onClose = () => {} }) {
   const isTouch = matchMedia('(pointer: coarse)').matches;
   const boardH = Math.min(MAX_H_PX, Math.max(MIN_H_PX, Math.ceil(wallH)));
   const Wm = wallW / PX_PER_M, Hm = boardH / PX_PER_M;
@@ -247,9 +247,12 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], opac
     <div class="v3d-bubble" hidden></div>
     <div class="v3d-cardwrap" hidden></div>
     <button class="v3d-music" aria-label="Música" title="Música ligada/desligada">🔊</button>
+    ${place ? '<div class="v3d-place"></div>' : ''}
     <div class="v3d-hint">${isTouch ? 'Círculo à esquerda: andar · arraste à direita: olhar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
     ${isTouch ? '<div class="v3d-joy" aria-label="Andar"><div class="knob"></div></div><button class="v3d-jump" aria-label="Pular">⤒</button>' : ''}`;
   document.body.appendChild(root);
+  const placeEl = root.querySelector('.v3d-place');
+  if (placeEl) placeEl.textContent = '📍 ' + place;
   const msg = root.querySelector('.v3d-msg');
 
   // make sure the scribble fonts are ready before drawing them onto the texture

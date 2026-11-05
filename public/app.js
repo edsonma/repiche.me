@@ -51,6 +51,59 @@ createApp({
     const setupDismissed = ref(false);
     const setupName = ref('');
     const setupError = ref('');
+    // ---- optional place for a new wall (browser location, only when the person asks) ----
+    const setupGeo = ref(null);        // { lat, lon } approx.
+    const setupPlace = ref('');
+    const geoBusy = ref(false);
+    const wallGeo = ref(null);         // place of the wall being viewed
+    function useLocation() {
+      setupError.value = '';
+      if (!navigator.geolocation) { setupError.value = 'Seu navegador não informa a localização.'; return; }
+      geoBusy.value = true;
+      navigator.geolocation.getCurrentPosition(
+        (pos) => { setupGeo.value = { lat: Math.round(pos.coords.latitude * 100) / 100, lon: Math.round(pos.coords.longitude * 100) / 100 }; geoBusy.value = false; },
+        () => { geoBusy.value = false; setupError.value = 'Não consegui pegar sua localização (permissão negada?).'; },
+        { maximumAge: 600000, timeout: 15000 });
+    }
+    const clearLocation = () => { setupGeo.value = null; setupPlace.value = ''; };
+
+    // ---- map of walls that have a place (OpenStreetMap tiles via Leaflet, served from our own server) ----
+    const showMap = ref(false);
+    const mapEl = ref(null);
+    const mapWalls = ref([]);
+    let leafletMap = null;
+    const loadScript = (src) => new Promise((ok, no) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = no; document.head.appendChild(el); });
+    async function openMap() {
+      showMap.value = true; mapWalls.value = [];
+      try {
+        if (!window.L) {
+          const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = '/vendor/leaflet/leaflet.css'; document.head.appendChild(css);
+          await loadScript('/vendor/leaflet/leaflet.js');
+        }
+        mapWalls.value = await api('/api/map');
+        await Vue.nextTick();
+        if (!mapEl.value) return;
+        const L = window.L;
+        const here = wallGeo.value;
+        leafletMap = L.map(mapEl.value, { worldCopyJump: true }).setView(here ? [here.lat, here.lon] : [-15.8, -47.9], here ? 12 : 4);
+        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(leafletMap);
+        const pts = [];
+        for (const w of mapWalls.value) {
+          const icon = L.divIcon({ className: 'wallpin', html: '<span></span>', iconSize: [22, 22], iconAnchor: [11, 22] });
+          const m = L.marker([w.lat, w.lon], { icon, title: '/' + w.slug }).addTo(leafletMap);
+          const box = document.createElement('div');
+          const a = document.createElement('a'); a.href = '/' + w.slug; a.textContent = '/' + w.slug;
+          a.addEventListener('click', (e) => { e.preventDefault(); closeMap(); go(w.slug); });
+          const info = document.createElement('small'); info.textContent = ` ${w.place ? w.place + ' · ' : ''}${w.count} pichações`;
+          box.append(a, info);
+          m.bindPopup(box);
+          pts.push([w.lat, w.lon]);
+        }
+        if (!here && pts.length > 1) leafletMap.fitBounds(pts, { padding: [30, 30], maxZoom: 12 });
+        else if (!here && pts.length === 1) leafletMap.setView(pts[0], 10);
+      } catch (e) { error.value = 'Mapa indisponível.'; showMap.value = false; }
+    }
+    function closeMap() { showMap.value = false; if (leafletMap) { leafletMap.remove(); leafletMap = null; } }
     const existsName = ref('');
     const creating = ref(false);
     const palette = ['#8b3a2b', '#7d7d7d', '#7a5230', '#10173a', '#f1ebd8', '#2c2c30', '#2b6cb0', '#2e7d4f', '#b8860b', '#6b2f7a', '#c2185b', '#e6e6e6'];
@@ -66,6 +119,7 @@ createApp({
           posts: visiblePosts.value.map((p) => ({ ...p })),
           opacity: (p) => fade(p),
           background: { ...background.value },
+          place: wallGeo.value && wallGeo.value.place || '',
           wallW: baseW.value, wallH: wallH.value, fonts: meta.fonts || [],
           onClose: () => { viewer3d = null; },
         });
@@ -171,6 +225,8 @@ createApp({
         if (w.serverNow) skew = w.serverNow - Date.now();
         selectedId.value = null;
         wallSetup.value = w.setup !== false;
+        wallGeo.value = w.geo || null;
+        clearLocation();
         setupDismissed.value = false;
         setupError.value = ''; existsName.value = '';
         setupName.value = slug.value === 'home' ? '' : slug.value; // the home page has no name yet
@@ -360,12 +416,12 @@ createApp({
       if (!name) { setupError.value = 'Escolha um nome para o muro.'; return; }
       creating.value = true;
       try {
-        await api(`/api/walls/${encodeURIComponent(name)}/setup`, {
+        const made = await api(`/api/walls/${encodeURIComponent(name)}/setup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ background: background.value }),
+          body: JSON.stringify({ background: background.value, ...(setupGeo.value ? { geo: { ...setupGeo.value, place: setupPlace.value.trim() } } : {}) }),
         });
-        if (name === slug.value) wallSetup.value = true; // same URL: just close the popup
+        if (name === slug.value) { wallSetup.value = true; wallGeo.value = (made && made.geo) || null; } // same URL: just close the popup
         else go(name);                                    // new name: open that wall
       } catch (e) {
         // that wall already exists: don't make the person read an error, just take them there
@@ -435,6 +491,7 @@ createApp({
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
       visiblePosts, selectedId, toggleSelect, support, isSupported, timeLeft,
+      setupGeo, setupPlace, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapEl, mapWalls, openMap, closeMap,
       opening3d, open3D, palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,

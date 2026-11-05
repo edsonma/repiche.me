@@ -38,6 +38,8 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 - Whitelisted fonts/colors, 140-char limit, per-IP rate limit
 - **Scribbles that fade.** Anonymous scribbles last 7 days and grow fainter as time runs out, then vanish. Anyone can tap one and press "♥ apoiar" to add a day (once per person, up to 30 days total). Signing a scribble ("Assinar como…") makes it permanent. The first browser to use a name owns it (a random secret kept in that browser, stored only as a hash). Scribbles made before this rule existed are permanent. Tunable with `ANON_TTL_MS` and `SUPPORT_BONUS_MS`. Trade-off: with no accounts, clearing browser data loses the right to your signature.
 
+- **Places and map.** When creating a wall you can optionally tie it to a place ("📍 Usar minha localização" + a place name). The browser only asks for location when you click. Coordinates are rounded to 2 decimals (~1 km) before being sent/stored, so a wall names a neighbourhood, never an address; the place is fixed at creation like the look. The "mapa" button shows walls that have a place on an OpenStreetMap map (Leaflet is served from our own server; only the tile images come from `tile.openstreetmap.org`, allowed in the CSP). The place name is shown in the top bar and in the 3D view. Not used: Google Street View imagery (licence). Note the public OSM tile server is for light use; switch to a tile provider if traffic grows.
+
 ## Not implemented (yet)
 
 Accounts, chat, the 2013 redesign, moderation tools, a real database.

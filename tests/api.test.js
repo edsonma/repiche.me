@@ -168,6 +168,29 @@ const TOKEN = 'correct-horse-battery-staple';
   check('ids keep growing after scribbles vanished (no reuse)', fresh.id > a2.id + 1, `${a2.id} -> ${fresh.id}`);
   await sFast.stop();
 
+  // ---- places / map ----
+  const gs = await startServer();
+  const setupG = (slug, body) => fetch(`${gs.base}/api/walls/${slug}/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, ...body }) });
+  let gr = await setupG('praca', { geo: { lat: -23.550520, lon: -46.633308, place: '  Praça\u202E da   Sé ' } });
+  let jr = await gr.json();
+  check('wall can be tied to a place; coordinates rounded to ~1 km, text cleaned', gr.status === 201 && jr.geo.lat === -23.55 && jr.geo.lon === -46.63 && jr.geo.place === 'Praça da Sé', JSON.stringify(jr));
+  await sleep(2200);
+  check('invalid places are rejected (range, type, NaN-like)', (await setupG('ruim1', { geo: { lat: 99, lon: 0 } })).status === 400);
+  await sleep(2200);
+  check('...string coordinates too', (await setupG('ruim2', { geo: { lat: '1', lon: '2' } })).status === 400);
+  await sleep(2200);
+  gr = await setupG('semlugar', {});
+  check('place is optional', gr.status === 201 && !(await gr.json()).geo);
+  check('GET wall returns its place', (await (await fetch(`${gs.base}/api/walls/praca`)).json()).geo.place === 'Praça da Sé');
+  const mp = await (await fetch(`${gs.base}/api/map`)).json();
+  check('/api/map lists only walls that have a place', mp.length === 1 && mp[0].slug === 'praca' && mp[0].lat === -23.55 && !('posts' in mp[0]), JSON.stringify(mp));
+  await sleep(2200);
+  check('place cannot be changed afterwards (setup again -> 409)', (await setupG('praca', { geo: { lat: 1, lon: 1 } })).status === 409);
+  check('geolocation allowed only for our own page', /geolocation=\(self\)/.test((await fetch(gs.base + '/')).headers.get('permissions-policy')));
+  check('CSP lets map tiles load, nothing else external for images', /img-src [^;]*https:\/\/tile\.openstreetmap\.org/.test((await fetch(gs.base + '/')).headers.get('content-security-policy')));
+  check('leaflet is served locally', (await fetch(gs.base + '/vendor/leaflet/leaflet.js')).status === 200);
+  await gs.stop();
+
   // ---- persistence ----
   const dir = s.dir;
   s = await startServer({ dir });

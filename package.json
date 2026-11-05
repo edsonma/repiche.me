@@ -15,6 +15,7 @@
   "dependencies": {
     "@vue/compiler-dom": "^3.5.44",
     "express": "^4.19.2",
+    "leaflet": "^1.9.4",
     "three": "^0.170.0",
     "vue": "^3.4.0"
   },

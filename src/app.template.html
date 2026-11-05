@@ -4,9 +4,10 @@
 
       <header class="topbar">
         <a class="logo" href="/" @click.prevent="go('home')">repiche<span>.me</span></a>
-        <div class="wall-name">/{{ slug }} <small v-if="total">({{ total }} pichações)</small></div>
+        <div class="wall-name">/{{ slug }} <small v-if="wallGeo && wallGeo.place">📍 {{ wallGeo.place }}</small> <small v-if="total">({{ total }} pichações)</small></div>
         <div class="actions">
           <button @click="showNav = true">muros</button>
+          <button class="outline" @click="openMap">mapa</button>
           <button class="outline" @click="showCredits = true">créditos</button>
           <button class="icon3d" @click="open3D" :disabled="opening3d" title="Ver o muro em 3D" aria-label="Ver o muro em 3D">
             <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"><path d="M12 2.5 3.5 7v10L12 21.5 20.5 17V7z"/><path d="M3.5 7 12 11.5 20.5 7M12 11.5v10"/></svg>
@@ -117,6 +118,17 @@
               <input type="color" :value="background.color" @input="setColor($event.target.value)">
             </label>
           </div>
+          <div class="step">3. Lugar <small>(opcional)</small></div>
+          <div class="placebox">
+            <template v-if="!setupGeo">
+              <button type="button" class="secondary" :disabled="geoBusy" @click="useLocation">{{ geoBusy ? 'buscando…' : '📍 Usar minha localização' }}</button>
+              <small>Só aparece no mapa o bairro/região (arredondado, ~1 km). Nada é pedido sem você clicar.</small>
+            </template>
+            <template v-else>
+              <input v-model="setupPlace" maxlength="40" placeholder="Nome do lugar (ex.: Praça da Sé)" autocomplete="off" aria-label="Nome do lugar">
+              <small>Região aprox. {{ setupGeo.lat }}, {{ setupGeo.lon }} · <a href="#" @click.prevent="clearLocation">remover</a></small>
+            </template>
+          </div>
           <p class="err" v-if="setupError">{{ setupError }}
             <a v-if="existsName" :href="'/' + existsName" @click.prevent="go(existsName)">Entrar em /{{ existsName }}</a>
           </p>
@@ -142,6 +154,16 @@
             </li>
           </ul>
           <button class="close" @click="showNav = false">fechar</button>
+        </div>
+      </div>
+
+      <!-- map of walls tied to a place -->
+      <div class="modal-backdrop" v-if="showMap" @click.self="closeMap">
+        <div class="modal mapmodal">
+          <h2>Muros no mapa</h2>
+          <div class="map" ref="mapEl"></div>
+          <small v-if="!mapWalls.length">Nenhum muro com lugar ainda. Crie um muro e marque o lugar!</small>
+          <button class="close" @click="closeMap">fechar</button>
         </div>
       </div>
 
