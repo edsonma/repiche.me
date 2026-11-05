@@ -12,7 +12,7 @@ async function startServer({ seed, env = {}, dir } = {}) {
   dir = dir || fs.mkdtempSync(path.join(os.tmpdir(), 'repiche-test-'));
   if (seed) fs.writeFileSync(path.join(dir, 'db.json'), typeof seed === 'string' ? seed : JSON.stringify(seed));
   const port = await freePort();
-  const proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: dir, PORT: String(port), ...env }, stdio: 'ignore' });
+  const proc = spawn('node', ['server.js'], { cwd: path.join(__dirname, '..'), env: { ...process.env, DATA_DIR: dir, PORT: String(port), ...env }, stdio: ['ignore', 'ignore', 'inherit'] });
   const base = `http://localhost:${port}`;
   for (let i = 0; i < 50; i++) { try { if ((await fetch(base + '/health')).ok) break; } catch { /* not up yet */ } await sleep(100); }
   return {

@@ -15,7 +15,16 @@ const MAX_TEXT = 140;
 const MAX_POSTS_PER_WALL = 2000;
 // Board width in px (must match what the client draws). x of a scribble is a % of the free width.
 const WALL_W = 10080; // 50 m in the 3D view (200 px = 1 m); a multiple of 3360 so 3D wall segments line up
-const MAX_Y = 20000; // px from the top of the wall; x is 0-100 (% of the free width)
+const MAX_Y = 20000;
+// Life of scribbles: anonymous ones fade and vanish after ANON_TTL (+1 day per "apoiar", up to 30);
+// signed ones (a claimed signature) are permanent. ANON_TTL_MS exists so tests don't wait a week.
+const DAY = 24 * 3600 * 1000;
+const ANON_TTL = Number(process.env.ANON_TTL_MS) > 0 ? Number(process.env.ANON_TTL_MS) : 7 * DAY;
+const SUPPORT_BONUS = Number(process.env.SUPPORT_BONUS_MS) > 0 ? Number(process.env.SUPPORT_BONUS_MS) : DAY;
+const MAX_SUPPORT = 30;
+const MAX_NICKS = 20000;
+const NICK_RE = /^[\p{L}\p{N}][\p{L}\p{N} ._-]{1,19}$/u;
+const RESERVED_NICKS = new Set(['admin', 'administrador', 'moderador', 'repiche', 'repiche.me', 'piche', 'piche.me', 'sistema']); // px from the top of the wall; x is 0-100 (% of the free width)
 const FONTS = [
   'Permanent Marker', 'Rock Salt', 'Special Elite', 'Londrina Solid',
   'Pacifico', 'Bangers', 'Caveat', 'Creepster', 'Fredericka the Great',
@@ -62,12 +71,15 @@ function normalizeBackground(b) {
 // ---- Tiny JSON "database" ------------------------------------------------
 // walls is a prototype-less object: a wall called "constructor" or "__proto__" can never reach
 // Object.prototype (slugs like these match SLUG_RE, so this used to be a real hole).
-let db = { walls: Object.create(null), boardW: undefined };
+let db = { walls: Object.create(null), boardW: undefined, nicks: Object.create(null), salt: undefined, rules: 0 };
 fs.mkdirSync(path.dirname(DATA_FILE), { recursive: true });
 if (fs.existsSync(DATA_FILE)) {
   try {
     const parsed = JSON.parse(fs.readFileSync(DATA_FILE, 'utf8'));
     db.boardW = parsed.boardW;
+    db.rules = parsed.rules || 0;
+    db.salt = parsed.salt;
+    for (const [k, v] of Object.entries(parsed.nicks || {})) if (v && typeof v.h === 'string' && typeof v.name === 'string') db.nicks[k] = v;
     for (const [slug, w] of Object.entries(parsed.walls || {})) {
       if (SLUG_RE.test(slug) && !BAD_SLUGS.has(slug) && w && typeof w === 'object' && Array.isArray(w.posts)) db.walls[slug] = w;
     }
@@ -128,6 +140,35 @@ function save() {
     save();
   }
 }
+
+// Signature rules start now: everything that already exists stays permanent (it predates the rule).
+{
+  let dirty = false;
+  if (!db.salt) { db.salt = crypto.randomBytes(16).toString('hex'); dirty = true; }
+  if (db.rules !== 1) {
+    for (const w of Object.values(db.walls)) for (const p of w.posts) if (p.sig === undefined) p.perm = true;
+    db.rules = 1; dirty = true;
+  }
+  // ids keep counting up even after scribbles vanish (a reused id would confuse open pages)
+  for (const w of Object.values(db.walls)) if (!w.nextId) w.nextId = w.posts.reduce((m, p) => Math.max(m, p.id), 0) + 1;
+  if (dirty) save();
+}
+
+const expiresAt = (p) => (p.sig || p.perm ? null : p.createdAt + ANON_TTL + Math.min(p.sup || 0, MAX_SUPPORT) * SUPPORT_BONUS);
+const isAlive = (p) => { const e = expiresAt(p); return e === null || e > Date.now(); };
+// what the API shows: never the supporter hashes
+const pub = (p) => ({
+  id: p.id, text: p.text, font: p.font, color: p.color, size: p.size, bold: p.bold, x: p.x, y: p.y, rot: p.rot, createdAt: p.createdAt,
+  ...(p.sig ? { sig: p.sig } : {}), sup: p.sup || 0, expiresAt: expiresAt(p),
+});
+function purge() {
+  let n = 0;
+  for (const w of Object.values(db.walls)) { const before = w.posts.length; w.posts = w.posts.filter(isAlive); n += before - w.posts.length; }
+  if (n) save();
+}
+purge();
+setInterval(purge, 10 * 60 * 1000).unref();
+const sha = (v) => crypto.createHash('sha256').update(String(v)).digest('hex');
 
 function getWall(slug, create = false) {
   if (BAD_SLUGS.has(slug)) return undefined;
@@ -224,7 +265,7 @@ app.get('/api/walls', (req, res) => {
     .map((w) => ({
       slug: w.slug,
       background: w.background,
-      count: w.posts.length,
+      count: w.posts.filter(isAlive).length,
       last: w.posts.length ? w.posts[w.posts.length - 1].createdAt : w.createdAt,
     }))
     .sort((a, b) => b.last - a.last)
@@ -249,8 +290,9 @@ app.get('/api/walls/:slug', (req, res) => {
   res.json({
     slug: wall.slug,
     background: wall.background,
-    total: wall.posts.length,
-    posts: Number.isFinite(after) ? wall.posts.filter((p) => p.id > after) : wall.posts,
+    serverNow: Date.now(),
+    total: wall.posts.filter(isAlive).length,
+    posts: wall.posts.filter((p) => isAlive(p) && (!Number.isFinite(after) || p.id > after)).map(pub),
     setup: !!wall.setup,
   });
 });
@@ -285,7 +327,7 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
   const slug = req.params.slug.toLowerCase();
   if (!validSlug(slug)) return res.status(400).json({ error: 'Nome de muro inválido.' });
 
-  const { text, font, color, size, bold, x, y, rot } = req.body || {};
+  const { text, font, color, size, bold, x, y, rot, sig, token } = req.body || {};
   const num = (v) => typeof v === 'number' && Number.isFinite(v);
   const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
   // no control chars, zero-width or bidi-override characters (they can reorder/hide text); newlines -> space
@@ -297,11 +339,29 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
   if (!COLOR_RE.test(color)) return res.status(400).json({ error: 'Cor inválida.' });
   const fontSize = Math.min(72, Math.max(14, parseInt(size, 10) || 28));
 
+  // Optional signature: the first person to use a name claims it (tied to a secret kept in their browser);
+  // nobody else can sign with it afterwards. Signed scribbles never fade.
+  let nick = '';
+  if (typeof sig === 'string' && sig.trim()) {
+    nick = sig.normalize('NFKC').replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF]/g, '').replace(/\s+/g, ' ').trim();
+    if (!NICK_RE.test(nick)) return res.status(400).json({ error: 'Assinatura inválida: 2 a 20 letras, números, espaço, ponto, - ou _.' });
+    if (RESERVED_NICKS.has(nick.toLowerCase())) return res.status(400).json({ error: 'Esse nome de assinatura é reservado.' });
+    if (typeof token !== 'string' || !/^[0-9a-f]{32,128}$/.test(token)) return res.status(400).json({ error: 'Não foi possível identificar este navegador.' });
+    const key = nick.toLowerCase(), h = sha(token), owner = db.nicks[key];
+    if (owner && owner.h !== h) return res.status(403).json({ error: 'Esse nome de assinatura já tem dono. Escolha outro.' });
+    if (!owner) {
+      if (Object.keys(db.nicks).length >= MAX_NICKS) return res.status(503).json({ error: 'Assinaturas esgotadas por enquanto.' });
+      db.nicks[key] = { name: nick, h };
+    }
+    nick = db.nicks[key].name;
+  }
+
   const wall = getWall(slug, true);
   if (!wall) return res.status(503).json({ error: 'Muitos muros criados. Tente mais tarde.' });
-  const lastId = wall.posts.length ? wall.posts[wall.posts.length - 1].id : 0;
+  const id = wall.nextId || (wall.posts.reduce((m, p) => Math.max(m, p.id), 0) + 1);
+  wall.nextId = id + 1;
   const post = {
-    id: lastId + 1,
+    id,
     text: clean,
     font,
     color,
@@ -313,12 +373,37 @@ app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
     y: num(y) ? clamp(Math.round(y), 0, MAX_Y) : Math.round(Math.random() * 600),
     rot: num(rot) ? clamp(Math.round(rot * 10) / 10, -180, 180) : Math.round((Math.random() * 30 - 15) * 10) / 10,
     createdAt: Date.now(),
+    ...(nick ? { sig: nick } : {}),
   };
   wall.posts.push(post);
   wall.setup = true;
-  if (wall.posts.length > MAX_POSTS_PER_WALL) wall.posts.shift();
+  if (wall.posts.length > MAX_POSTS_PER_WALL) { // full: drop the oldest fading one first, signed ones last
+    const i = wall.posts.findIndex((p) => expiresAt(p) !== null);
+    wall.posts.splice(i >= 0 ? i : 0, 1);
+  }
   save();
-  res.status(201).json(post);
+  res.status(201).json(pub(post));
+});
+
+// "Apoiar": +1 day of life for a fading (anonymous) scribble, once per browser and per network, max 30.
+const supportLimit = limiter(1500);
+app.post('/api/walls/:slug/posts/:id/support', supportLimit, (req, res) => {
+  const slug = req.params.slug.toLowerCase();
+  if (!validSlug(slug)) return res.status(400).json({ error: 'Nome de muro inválido.' });
+  const token = (req.body || {}).token;
+  if (typeof token !== 'string' || !/^[0-9a-f]{32,128}$/.test(token)) return res.status(400).json({ error: 'Não foi possível identificar este navegador.' });
+  const wall = db.walls[slug];
+  const p = wall && wall.posts.find((q) => q.id === parseInt(req.params.id, 10));
+  if (!p || !isAlive(p)) return res.status(404).json({ error: 'Essa pichação não existe mais.' });
+  if (expiresAt(p) === null) return res.status(400).json({ error: 'Essa pichação já é permanente.' });
+  if ((p.sup || 0) >= MAX_SUPPORT) return res.status(409).json({ error: 'Essa pichação já recebeu o apoio máximo.' });
+  const th = sha(token).slice(0, 12), ih = sha(db.salt + req.ip).slice(0, 12);
+  p.supBy = p.supBy || [];
+  if (p.supBy.includes(th) || p.supBy.includes(ih)) return res.status(409).json({ error: 'Você já apoiou essa pichação.' });
+  p.supBy.push(th, ih);
+  p.sup = (p.sup || 0) + 1;
+  save();
+  res.json(pub(p));
 });
 
 // Moderation: scribbles are permanent for everyone, except the site admin. Off unless ADMIN_TOKEN (>=16 chars) is set.

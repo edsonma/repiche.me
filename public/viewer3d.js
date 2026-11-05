@@ -94,7 +94,7 @@ function wrapLines(ctx, text, maxW) {
   if (cur) lines.push(cur);
   return lines;
 }
-function paintScribbles(ctx, posts, boardW, boardH, x0 = -1e9, x1 = 1e9) {
+function paintScribbles(ctx, posts, boardW, boardH, x0 = -1e9, x1 = 1e9, opacity = () => 1) {
   ctx.textBaseline = 'top';
   for (const p of posts) {
     if (p.y > boardH) continue;
@@ -103,15 +103,17 @@ function paintScribbles(ctx, posts, boardW, boardH, x0 = -1e9, x1 = 1e9) {
     const lines = wrapLines(ctx, p.text, boardW);
     const lh = fs * 1.15;
     const bw = Math.max(...lines.map((l) => ctx.measureText(l).width));
-    const bh = lh * lines.length;
+    const bh = lh * lines.length + (p.sig ? 18 : 0);
     const left = (p.x / 100) * (boardW - bw);
     if (left + bw + fs < x0 || left - fs > x1) continue; // not on this segment
     ctx.save();
     ctx.translate(left + bw / 2, p.y + bh / 2);
     ctx.rotate((p.rot * Math.PI) / 180);
+    ctx.globalAlpha = opacity(p); // fading (anonymous) scribbles are fainter
     ctx.fillStyle = p.color;
     ctx.shadowColor = 'rgba(0,0,0,.4)'; ctx.shadowBlur = 3; ctx.shadowOffsetY = 1;
     lines.forEach((l, i) => ctx.fillText(l, -bw / 2, -bh / 2 + i * lh + (lh - fs) / 2));
+    if (p.sig) { ctx.font = "600 14px system-ui, sans-serif"; ctx.fillText('— ' + p.sig, -bw / 2, -bh / 2 + lines.length * lh + 4); }
     ctx.restore();
   }
 }
@@ -229,7 +231,7 @@ export function createMusic() {
   };
 }
 
-export async function open3D({ posts, background, wallW, wallH, fonts = [], onClose = () => {} }) {
+export async function open3D({ posts, background, wallW, wallH, fonts = [], opacity = () => 1, onClose = () => {} }) {
   const isTouch = matchMedia('(pointer: coarse)').matches;
   const boardH = Math.min(MAX_H_PX, Math.max(MIN_H_PX, Math.ceil(wallH)));
   const Wm = wallW / PX_PER_M, Hm = boardH / PX_PER_M;
@@ -335,7 +337,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], onCl
     const cv = document.createElement('canvas'); cv.width = Math.round(sw * kTex); cv.height = Math.round(boardH * kTex);
     const g2 = cv.getContext('2d'); g2.scale(kTex, kTex);
     paintSurface(g2, sw, boardH, background.texture, background.color, 7 + i);
-    g2.save(); g2.translate(-x0, 0); paintScribbles(g2, posts, wallW, boardH, x0, x0 + sw); g2.restore();
+    g2.save(); g2.translate(-x0, 0); paintScribbles(g2, posts, wallW, boardH, x0, x0 + sw, opacity); g2.restore();
     const tex = track(new THREE.CanvasTexture(cv));
     tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
     const front = track(new THREE.MeshLambertMaterial({ map: tex }));

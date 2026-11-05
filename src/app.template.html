@@ -21,13 +21,26 @@
       <div class="viewport" ref="viewportEl">
         <div class="pad">
           <div class="sizer" :style="{ width: baseW * zoom + 'px', height: wallH * zoom + 'px' }">
-            <main class="wall" ref="wallEl"
+            <main class="wall" ref="wallEl" @click="selectedId = null"
                   :style="{ width: baseW + 'px', height: wallH + 'px', transform: 'scale(' + zoom + ')' }">
               <p class="empty" v-if="!loading && !posts.length && !placing">Muro vazio. Seja o primeiro a pichar!</p>
+              <!-- Tap a scribble to see how long it lasts and to support it. Anonymous scribbles fade and vanish;
+                   signed ones are permanent. -->
               <div class="scribble"
-                   v-for="p in posts" :key="p.id"
-                   :class="{ fresh: p.id === freshId }"
-                   :style="scribbleStyle(p)">{{ p.text }}</div>
+                   v-for="p in visiblePosts" :key="p.id"
+                   :class="{ fresh: p.id === freshId, selected: p.id === selectedId }"
+                   :style="scribbleStyle(p)" @click.stop="toggleSelect(p)">
+                <span class="txt">{{ p.text }}</span>
+                <small class="sig" v-if="p.sig">— {{ p.sig }}</small>
+                <span class="act" v-if="p.id === selectedId" @click.stop>
+                  <template v-if="p.expiresAt">
+                    <span>some em {{ timeLeft(p) }}</span>
+                    <button type="button" :disabled="isSupported(p)" @click.stop="support(p)">{{ isSupported(p) ? '♥ apoiado' : '♥ apoiar' }}</button>
+                    <small v-if="p.sup">{{ p.sup }} {{ p.sup === 1 ? 'apoio' : 'apoios' }}</small>
+                  </template>
+                  <span v-else>✓ fica para sempre<template v-if="p.sig"> · assinada</template></span>
+                </span>
+              </div>
               <!-- the scribble being placed: drag it, then "Fixar aqui" -->
               <div class="scribble ghost" v-if="placing" ref="ghostEl"
                    :class="{ dragging: draggingGhost }" :style="ghostStyle"
@@ -70,6 +83,10 @@
         </div>
         <div class="preview" v-else :style="{ color: draft.color, fontFamily: `'${draft.font}', cursive`, fontSize: draft.size + 'px', fontWeight: draft.bold ? 'bold' : 'normal' }">
           {{ draft.text || 'pré-visualização' }}
+        </div>
+        <div class="sigrow">
+          <input class="sigin" v-model="draft.sig" maxlength="20" placeholder="Assinar como… (opcional)" autocomplete="off" aria-label="Assinatura">
+          <span class="sighint">{{ draft.sig && draft.sig.trim() ? 'Assinada: fica para sempre. O nome passa a ser só seu.' : 'Sem assinatura, some em 7 dias (os outros podem apoiar).' }}</span>
         </div>
         <div class="error" v-if="error">{{ error }}</div>
       </form>

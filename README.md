@@ -26,7 +26,7 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 ## Features
 
 - Anonymous walls by URL, scribbles with chosen font, color, size and weight
-- Scribbles are permanent: text and position cannot be edited or moved once fixed (the API has no edit/delete routes)
+- Scribbles are immutable: text and position cannot be edited or moved once fixed (the API has no edit/delete routes); see below for when they vanish
 - 2D wall: after "Pichar" drag the scribble anywhere and rotate it (-180° to 180°) with the "Girar" slider or a two-finger twist on touch screens, then "Fixar aqui". Position is saved and identical on every reload and for every visitor
 - Very wide wall: 10080 px (50 m in 3D), constant `WALL_W` in `server.js` (the client reads it from `/api/meta`). Scroll sideways; starts centered. If you change it, existing scribbles are re-centered once on startup
 - Creating a wall: opening an unused name with no scribbles shows "Crie seu muro" (name + color/texture). Nothing is stored until "Criar muro"
@@ -36,6 +36,7 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 - Credits button with the original piche.me creators and references
 - Recent walls modal, live polling
 - Whitelisted fonts/colors, 140-char limit, per-IP rate limit
+- **Scribbles that fade.** Anonymous scribbles last 7 days and grow fainter as time runs out, then vanish. Anyone can tap one and press "♥ apoiar" to add a day (once per person, up to 30 days total). Signing a scribble ("Assinar como…") makes it permanent. The first browser to use a name owns it (a random secret kept in that browser, stored only as a hash). Scribbles made before this rule existed are permanent. Tunable with `ANON_TTL_MS` and `SUPPORT_BONUS_MS`. Trade-off: with no accounts, clearing browser data loses the right to your signature.
 
 ## Not implemented (yet)
 

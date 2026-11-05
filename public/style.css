@@ -269,3 +269,15 @@ button:disabled { opacity: .5; cursor: wait; }
 .v3d-card .refs a { color: #c2370f; }
 .v3d-card .closecard { display: block; margin-left: auto; padding: 9px 20px; border: 0; border-radius: 10px; background: #ff5a3c; color: #fff; font: 700 15px system-ui, sans-serif; cursor: pointer; }
 @media (max-width: 520px) { .v3d-talk { bottom: 188px; } .v3d-bubble { bottom: 168px; } }
+
+/* signatures, fading scribbles, "apoiar" */
+.scribble { cursor: pointer; }
+.scribble.ghost { cursor: grab; }
+.scribble .sig { display: block; margin-top: 2px; font: 600 13px system-ui, sans-serif; letter-spacing: 0; opacity: .85; text-shadow: 0 1px 2px #0008; }
+.scribble.selected { z-index: 6; outline: 1px dashed #fffa; outline-offset: 6px; }
+.scribble .act { position: absolute; top: 100%; left: 0; margin-top: 12px; z-index: 7; display: flex; gap: 8px; align-items: center; white-space: nowrap; padding: 5px 8px; border-radius: 8px; background: #000d; color: #fff; font: 400 13px/1.2 system-ui, sans-serif; text-shadow: none; cursor: default; }
+.scribble .act button { padding: 4px 10px; border: 0; border-radius: 6px; background: #ff5a3c; color: #fff; font: 600 13px system-ui, sans-serif; cursor: pointer; }
+.scribble .act button:disabled { background: #555; cursor: default; opacity: 1; }
+.sigrow { flex-basis: 100%; display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; }
+.sigin { flex: 1 1 180px; max-width: 280px; padding: 7px 9px; border: 0; border-radius: 6px; font-size: 14px; }
+.sighint { font-size: 12px; opacity: .85; flex: 1 1 200px; }

@@ -111,7 +111,62 @@ const TOKEN = 'correct-horse-battery-staple';
   r = await post('rapido', { ...P, text: 'um', x: 1, y: 1 });
   const r2 = await fetch(`${B}/api/walls/rapido/posts`, { method: 'POST', headers: { ...J, 'X-Forwarded-For': `10.7.0.${ip}` }, body: JSON.stringify({ ...P, text: 'dois', x: 1, y: 1 }) });
   check('scribble rate limit (same IP twice in 3 s -> 429)', r.status === 201 && r2.status === 429);
+
+  // ---- fading scribbles, signatures, "apoiar" ----
+  check('legacy scribbles are grandfathered: permanent', old.posts.every((x) => x.expiresAt === null));
+  const T1 = 'a'.repeat(64), T2 = 'b'.repeat(64);
+  p = await (await post('vida', { ...P, text: 'anonima', x: 1, y: 1 })).json();
+  check('anonymous scribble gets an expiry ~7 days out', p.expiresAt > Date.now() + 6.9 * 86400000 && p.expiresAt < Date.now() + 7.1 * 86400000 && !p.sig, String(p.expiresAt));
+  await sleep(3100);
+  r = await post('vida', { ...P, text: 'assinada', x: 2, y: 2, sig: '  Maria  Silva ', token: T1 });
+  p = await r.json();
+  check('signed scribble is permanent and shows the signature', r.status === 201 && p.sig === 'Maria Silva' && p.expiresAt === null);
+  await sleep(3100);
+  r = await post('vida', { ...P, text: 'roubo', x: 3, y: 3, sig: 'maria silva', token: T2 });
+  check('someone else cannot sign with a claimed name (403)', r.status === 403);
+  await sleep(3100);
+  r = await post('vida', { ...P, text: 'ok de novo', x: 3, y: 3, sig: 'MARIA SILVA', token: T1 });
+  check('the owner can keep signing (any capitalization)', r.status === 201 && (await r.json()).sig === 'Maria Silva');
+  await sleep(3100);
+  check('signature without a token -> 400', (await post('vida', { ...P, text: 'x', x: 1, y: 1, sig: 'Joao' })).status === 400);
+  await sleep(3100);
+  check('reserved / invalid signatures -> 400', (await post('vida', { ...P, text: 'x', x: 1, y: 1, sig: 'admin', token: T1 })).status === 400 && (await post('vida', { ...P, text: 'x', x: 1, y: 1, sig: '<b>', token: T1 })).status === 400);
+  const wv = await get('vida');
+  check('API never leaks supporter hashes or tokens', !JSON.stringify(wv).match(/supBy|"h"|token/));
+  const anonId = wv.posts.find((x) => x.text === 'anonima').id, signedId = wv.posts.find((x) => x.text === 'assinada').id;
+  const sup = (id, tok, xff) => fetch(`${B}/api/walls/vida/posts/${id}/support`, { method: 'POST', headers: { ...J, 'X-Forwarded-For': xff }, body: JSON.stringify({ token: tok }) });
+  r = await sup(anonId, T1, '10.50.0.1'); p = await r.json();
+  check('apoiar: +1 day of life', r.status === 200 && p.sup === 1 && p.expiresAt > Date.now() + 7.9 * 86400000, JSON.stringify([r.status, p.sup]));
+  await sleep(1600);
+  check('same browser cannot support twice (409)', (await sup(anonId, T1, '10.50.0.2')).status === 409);
+  await sleep(1600);
+  check('same network cannot support twice either (409)', (await sup(anonId, T2, '10.50.0.1')).status === 409);
+  await sleep(1600);
+  check('a signed (permanent) scribble needs no support (400)', (await sup(signedId, T2, '10.50.0.3')).status === 400);
+  await sleep(1600);
+  check('support needs a token (400)', (await sup(anonId, 'x', '10.50.0.4')).status === 400);
+
   await s.stop();
+
+  // short-lived server: anonymous scribbles vanish, supported ones last longer, signed ones stay
+  const sFast = await startServer({ env: { ANON_TTL_MS: '2500', SUPPORT_BONUS_MS: '3000', ADMIN_TOKEN: TOKEN } });
+  const FB = sFast.base;
+  let fip = 0;
+  const fpost = (body) => fetch(`${FB}/api/walls/rapida/posts`, { method: 'POST', headers: { ...J, 'X-Forwarded-For': `10.60.0.${++fip}` }, body: JSON.stringify({ ...P, x: 1, y: 1, ...body }) });
+  const a1 = await (await fpost({ text: 'some logo' })).json();
+  const a2 = await (await fpost({ text: 'apoiada' })).json();
+  await fpost({ text: 'fica', sig: 'Dona', token: T1 });
+  await fetch(`${FB}/api/walls/rapida/posts/${a2.id}/support`, { method: 'POST', headers: { ...J, 'X-Forwarded-For': '10.60.1.1' }, body: JSON.stringify({ token: T2 }) });
+  await sleep(3000);
+  let wf = await (await fetch(`${FB}/api/walls/rapida`)).json();
+  check('after the time is up the anonymous scribble is gone; supported and signed remain', !wf.posts.some((x) => x.text === 'some logo') && wf.posts.some((x) => x.text === 'apoiada') && wf.posts.some((x) => x.text === 'fica'), JSON.stringify(wf.posts.map((x) => x.text)));
+  check('total counts only living scribbles', wf.total === 2);
+  await sleep(3000);
+  wf = await (await fetch(`${FB}/api/walls/rapida`)).json();
+  check('supported scribble vanishes once its extra time is over; signed stays', !wf.posts.some((x) => x.text === 'apoiada') && wf.posts.some((x) => x.text === 'fica'));
+  const fresh = await (await fpost({ text: 'nova' })).json();
+  check('ids keep growing after scribbles vanished (no reuse)', fresh.id > a2.id + 1, `${a2.id} -> ${fresh.id}`);
+  await sFast.stop();
 
   // ---- persistence ----
   const dir = s.dir;

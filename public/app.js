@@ -24,7 +24,17 @@ createApp({
     const error = ref('');
     const freshId = ref(null);
     const meta = reactive({ fonts: ['Permanent Marker'], textures: [], presets: {}, maxText: 140 });
-    const draft = reactive({ text: '', font: 'Permanent Marker', color: '#ffffff', size: 28, bold: false });
+    // small helpers for things kept in this browser (all optional: they work without storage too)
+    const store = { get(k) { try { return localStorage.getItem(k); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, v); } catch { /* ignore */ } } };
+    let memToken = null;
+    // A random secret that never leaves this browser except to prove "it's me": it owns the signature
+    // you first used, and it makes "apoiar" count once per person.
+    function getToken() {
+      let t = memToken || store.get('repiche.id');
+      if (!t || !/^[0-9a-f]{64}$/.test(t)) { const a = new Uint8Array(32); crypto.getRandomValues(a); t = [...a].map((b) => b.toString(16).padStart(2, '0')).join(''); store.set('repiche.id', t); }
+      return (memToken = t);
+    }
+    const draft = reactive({ text: '', font: 'Permanent Marker', color: '#ffffff', size: 28, bold: false, sig: store.get('repiche.sig') || '' });
     const showNav = ref(false);
     const showCredits = ref(false);
     const walls = ref([]);
@@ -53,7 +63,8 @@ createApp({
       try {
         const mod = await import('/viewer3d.js');
         viewer3d = await mod.open3D({
-          posts: posts.value.map((p) => ({ ...p })),
+          posts: visiblePosts.value.map((p) => ({ ...p })),
+          opacity: (p) => fade(p),
           background: { ...background.value },
           wallW: baseW.value, wallH: wallH.value, fonts: meta.fonts || [],
           onClose: () => { viewer3d = null; },
@@ -95,7 +106,43 @@ createApp({
 
     // x is the scribble's spot across the *free* width: `left: x%` + `translateX(-x%)` keeps it
     // fully inside the board at any width. y is px from the top.
+    // ---- life of a scribble: anonymous ones fade out as their time runs low, then vanish ----
+    const nowMs = ref(Date.now());
+    let skew = 0, tickTimer = null; // skew = server clock - our clock
+    const clockNow = () => nowMs.value + skew;
+    const selectedId = ref(null);
+    const supported = reactive({});
+    try { Object.assign(supported, JSON.parse(store.get('repiche.sup') || '{}')); } catch { /* ignore */ }
+    const fade = (p) => {
+      if (!p.expiresAt) return 1;
+      const f = (p.expiresAt - clockNow()) / (p.expiresAt - p.createdAt); // share of its life still left
+      return f >= 0.4 ? 1 : Math.max(0.15, 0.15 + 0.85 * (f / 0.4));
+    };
+    const visiblePosts = computed(() => posts.value.filter((p) => !p.expiresAt || p.expiresAt > clockNow()));
+    const timeLeft = (p) => {
+      const ms = Math.max(0, p.expiresAt - (Date.now() + skew)); // live clock, not the 30 s tick
+      return ms >= 86400000 ? `${Math.round(ms / 86400000)} d` : `${Math.max(1, Math.ceil(ms / 3600000))} h`;
+    };
+    const supKey = (p) => `${slug.value}:${p.id}`;
+    const isSupported = (p) => !!supported[supKey(p)];
+    const toggleSelect = (p) => { if (!placing.value) selectedId.value = selectedId.value === p.id ? null : p.id; };
+    async function support(p) {
+      if (isSupported(p)) return;
+      error.value = '';
+      try {
+        const r = await api(`/api/walls/${encodeURIComponent(slug.value)}/posts/${p.id}/support`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ token: getToken() }),
+        });
+        Object.assign(p, r);
+      } catch (e) {
+        if (!/já apoiou|apoio máximo/.test(e.message)) { error.value = e.message; return; }
+      }
+      supported[supKey(p)] = 1;
+      store.set('repiche.sup', JSON.stringify(supported));
+    }
+
     const scribbleStyle = (p) => ({
+      opacity: p.id === selectedId.value ? 1 : fade(p),
       left: p.x + '%',
       top: p.y + 'px',
       transform: `translateX(-${p.x}%) rotate(${p.rot}deg)`,
@@ -121,6 +168,8 @@ createApp({
         background.value = w.background;
         posts.value = w.posts;
         total.value = w.total;
+        if (w.serverNow) skew = w.serverNow - Date.now();
+        selectedId.value = null;
         wallSetup.value = w.setup !== false;
         setupDismissed.value = false;
         setupError.value = ''; existsName.value = '';
@@ -148,6 +197,7 @@ createApp({
         const incoming = w.posts.filter((p) => !known.has(p.id));
         if (incoming.length) posts.value = [...posts.value, ...incoming];
         total.value = w.total;
+        if (w.serverNow) skew = w.serverNow - Date.now();
         wallSetup.value = w.setup !== false; // someone else may have created this wall meanwhile
         const bgBusy = showSetup.value;
         if (!bgBusy && !sameBg(background.value, w.background)) background.value = w.background;
@@ -273,10 +323,11 @@ createApp({
         const p = await api(`/api/walls/${encodeURIComponent(slug.value)}/posts`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...draft, x: placing.value.x, y: placing.value.y, rot: placing.value.rot }),
+          body: JSON.stringify({ ...draft, sig: draft.sig.trim() || undefined, token: getToken(), x: placing.value.x, y: placing.value.y, rot: placing.value.rot }),
         });
         posts.value = [...posts.value, p];
         total.value++;
+        store.set('repiche.sig', draft.sig.trim()); // remembered for next time
         freshId.value = p.id;
         draft.text = '';
         placing.value = null;
@@ -360,9 +411,10 @@ createApp({
       await loadWall();
       window.addEventListener('popstate', onPop);
       poll = setInterval(refresh, 5000);
+      tickTimer = setInterval(() => { nowMs.value = Date.now(); }, 30000); // re-fade / retire scribbles as time passes
     });
     onBeforeUnmount(() => {
-      clearInterval(poll);
+      clearInterval(poll); clearInterval(tickTimer);
       if (ro) ro.disconnect();
       window.removeEventListener('resize', measure);
       window.removeEventListener('popstate', onPop);
@@ -382,6 +434,7 @@ createApp({
       slug, background, posts, total, loading, sending, error, freshId,
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
+      visiblePosts, selectedId, toggleSelect, support, isSupported, timeLeft,
       opening3d, open3D, palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,

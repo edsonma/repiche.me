@@ -98,6 +98,47 @@ const J = { 'Content-Type': 'application/json' };
   const saved = (await (await fetch(base + '/api/walls/lab')).json()).posts[0];
   check('rotation and size are saved', saved && Math.abs(saved.rot - 45) <= 2 && saved.size === 30, JSON.stringify(saved && [saved.rot, saved.size]));
 
+  // ---------- signature, "apoiar", fading ----------
+  await p.$eval('.compose > input:not([type])', (e) => { e.value = ''; });
+  await p.type('.compose > input:not([type])', 'com nome');
+  await p.type('.sigin', 'Maria');
+  await sleep(2500);
+  check('signature hint says it stays forever', /fica para sempre/.test(await p.$eval('.sighint', (e) => e.textContent)));
+  await p.tap('.compose button[type=submit]'); await p.waitForSelector('.scribble.ghost');
+  await sleep(2500); // post rate limit
+  await p.tap('.compose button[type=submit]'); await sleep(900);
+  const lab = (await (await fetch(base + '/api/walls/lab')).json()).posts;
+  const signed = lab.find((x) => x.text === 'com nome');
+  check('signed scribble is saved with its name and never expires', signed && signed.sig === 'Maria' && signed.expiresAt === null, JSON.stringify(signed));
+  check('signature is drawn under the text', (await p.$$eval('.scribble .sig', (l) => l.map((e) => e.textContent))).includes('— Maria'));
+  await p.$eval('.sigin', (e) => { e.value = ''; e.dispatchEvent(new Event('input')); });
+  await p.type('.compose > input:not([type])', 'anonima');
+  await p.tap('.compose button[type=submit]'); await p.waitForSelector('.scribble.ghost');
+  await sleep(2500);
+  await p.tap('.compose button[type=submit]'); await sleep(900);
+  const anon = (await (await fetch(base + '/api/walls/lab')).json()).posts.find((x) => x.text === 'anonima');
+  check('anonymous scribble gets an expiry (~7 days)', anon && anon.expiresAt > Date.now() + 6 * 86400e3 && anon.expiresAt < Date.now() + 8 * 86400e3);
+  const anonEl = await p.evaluateHandle(() => [...document.querySelectorAll('.scribble')].find((e) => e.textContent.includes('anonima')));
+  await p.evaluate((e) => e.scrollIntoView({ block: 'center', inline: 'center' }), anonEl);
+  await anonEl.asElement().tap(); await sleep(300);
+  { const act = await p.$eval('.scribble.selected .act', (e) => e.textContent.replace(/\s+/g, ' ')); check('tapping an anonymous scribble shows time left and "apoiar"', /some em 7 d/.test(act) && /apoiar/.test(act), act); }
+  await p.tap('.scribble.selected .act button'); await sleep(900);
+  const sup = (await (await fetch(base + '/api/walls/lab')).json()).posts.find((x) => x.text === 'anonima');
+  check('"apoiar" adds a day and cannot be repeated', sup.sup === 1 && sup.expiresAt - anon.expiresAt === 86400e3 && await p.$eval('.scribble.selected .act button', (e) => e.disabled));
+
+  // old anonymous scribbles fade, expired ones vanish, signed ones stay
+  const now = Date.now(), D = 86400e3;
+  const mk = (id, text, age, extra = {}) => ({ id, text, font: 'Permanent Marker', color: '#ffffff', size: 28, bold: false, x: 20 + id * 5, y: 100 + id * 40, rot: 0, createdAt: now - age, ...extra });
+  const s2 = await startServer({ seed: { rules: 1, boardW: 10080, walls: { velho: { slug: 'velho', background: { color: '#2c2c30', texture: 'concrete' }, setup: true, createdAt: now - 20 * D, posts: [
+    mk(1, 'novinha', 1 * D), mk(2, 'quase sumindo', 6.5 * D), mk(3, 'ja sumiu', 8 * D), mk(4, 'assinada antiga', 30 * D, { sig: 'Zé' }) ] } } } });
+  const q = await b.newPage(); watch(q);
+  await q.setViewport({ width: 1000, height: 700 });
+  await q.goto(s2.base + '/velho', { waitUntil: 'networkidle0' });
+  const ops = await q.$$eval('.scribble:not(.ghost)', (l) => Object.fromEntries(l.map((e) => [e.querySelector('.txt').textContent, +e.style.opacity])));
+  check('expired anonymous scribble is gone, the rest remain', !('ja sumiu' in ops) && 'novinha' in ops && 'quase sumindo' in ops && 'assinada antiga' in ops, JSON.stringify(ops));
+  check('fresh and signed are fully opaque; the dying one is faint', ops.novinha === 1 && ops['assinada antiga'] === 1 && ops['quase sumindo'] < 0.5 && ops['quase sumindo'] >= 0.15, JSON.stringify(ops));
+  await q.close(); await s2.stop();
+
   // ---------- 3D (skipped where the browser has no WebGL) ----------
   const hasGL = await p.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2') || !!document.createElement('canvas').getContext('webgl'); } catch { return false; } });
   if (!hasGL) { console.log('SKIP  3D checks: no WebGL in this browser'); }
