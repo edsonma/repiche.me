@@ -17,6 +17,12 @@ const MAPILLARY_TOKEN = process.env.MAPILLARY_TOKEN || '';
 const MAPILLARY_API = process.env.MAPILLARY_API || 'https://graph.mapillary.com';
 const MAPILLARY_HOSTS = (process.env.MAPILLARY_HOSTS || 'fbcdn.net,mapillary.com').split(',');
 const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
+// Optional "street scene" of the place: buildings and roads from OpenStreetMap (Overpass API), kept as a small
+// JSON on our disk and drawn in the 3D view. OSM has no photos; this is a rebuilt 3D map, not a camera image.
+const SCENE_DIR = path.join(DATA_DIR, 'scenes');
+const OVERPASS_API = process.env.OVERPASS_API || 'https://overpass-api.de/api/interpreter';
+const SCENE_HALF_M = 220;      // metres around the (rounded) place
+const MAX_BUILDINGS = 500, MAX_ROADS = 200, MAX_PTS = 40;
 
 // ---- Limits / whitelists -------------------------------------------------
 const MAX_TEXT = 140;
@@ -316,6 +322,60 @@ app.get('/api/walls/:slug/photo', (req, res) => {
   res.set('Cache-Control', 'public, max-age=86400').type('image/jpeg').sendFile(path.join(PHOTO_DIR, slug + '.jpg'), (e) => { if (e && !res.headersSent) res.status(404).end(); });
 });
 
+async function fetchScene(slug, geo) {
+  const dLat = SCENE_HALF_M / 110540, dLon = SCENE_HALF_M / (111320 * Math.cos((geo.lat * Math.PI) / 180));
+  const bb = [geo.lat - dLat, geo.lon - dLon, geo.lat + dLat, geo.lon + dLon].map((n) => n.toFixed(6)).join(',');
+  const query = `[out:json][timeout:12];(way["building"](${bb});way["highway"](${bb}););out tags geom 900;`;
+  const r = await fetch(OVERPASS_API, {
+    method: 'POST', signal: AbortSignal.timeout(15000),
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'repiche.me (graffiti wall; github.com/edsonma/repiche.me)' },
+    body: 'data=' + encodeURIComponent(query),
+  });
+  if (!r.ok) throw new Error('overpass ' + r.status);
+  const els = ((await r.json()).elements || []);
+  const kx = 111320 * Math.cos((geo.lat * Math.PI) / 180), kz = 110540;
+  const toXZ = (g) => {
+    const out = [];
+    const step = Math.max(1, Math.ceil(g.length / MAX_PTS));
+    for (let i = 0; i < g.length; i += step) {
+      const p = g[i];
+      if (!p || typeof p.lat !== 'number' || typeof p.lon !== 'number') return null;
+      const x = (p.lon - geo.lon) * kx, z = -(p.lat - geo.lat) * kz; // north is -z: you face north looking at the wall
+      if (Math.abs(x) > 600 || Math.abs(z) > 600) return null;
+      out.push(Math.round(x * 10) / 10, Math.round(z * 10) / 10);
+    }
+    return out;
+  };
+  const ROAD_W = { motorway: 11, trunk: 10, primary: 9, secondary: 8, tertiary: 7, residential: 6, unclassified: 6, living_street: 5, service: 4, pedestrian: 4, footway: 1.6, path: 1.6, cycleway: 2, steps: 1.6, track: 3 };
+  const b = [], rd = [];
+  for (const e of els) {
+    if (e.type !== 'way' || !Array.isArray(e.geometry) || !e.geometry.length) continue;
+    const t = e.tags || {};
+    if (t.building && b.length < MAX_BUILDINGS) {
+      const pts = toXZ(e.geometry);
+      if (!pts || pts.length < 6) continue;
+      const lv = parseFloat(t['building:levels']), hh = parseFloat(t.height);
+      const h = Number.isFinite(hh) ? hh : Number.isFinite(lv) ? lv * 3 : 6 + (Math.abs(pts[0] * 7 + pts[1] * 13) % 6);
+      b.push([Math.round(Math.min(120, Math.max(2.5, h)) * 10) / 10, pts]);
+    } else if (t.highway && ROAD_W[t.highway] && rd.length < MAX_ROADS) {
+      const pts = toXZ(e.geometry);
+      if (pts && pts.length >= 4) rd.push([ROAD_W[t.highway], pts]);
+    }
+  }
+  if (!b.length && !rd.length) return null;
+  const data = JSON.stringify({ b, r: rd });
+  if (data.length > 600 * 1024) throw new Error('scene too big');
+  fs.mkdirSync(SCENE_DIR, { recursive: true });
+  fs.writeFileSync(path.join(SCENE_DIR, slug + '.json'), data);
+  return { buildings: b.length, roads: rd.length };
+}
+app.get('/api/walls/:slug/scene', (req, res) => {
+  const slug = req.params.slug.toLowerCase();
+  const w = validSlug(slug) && db.walls[slug];
+  if (!w || !w.scene) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=86400').type('application/json').sendFile(path.join(SCENE_DIR, slug + '.json'), (e) => { if (e && !res.headersSent) res.status(404).end(); });
+});
+
 // Walls that have a place (for the map)
 app.get('/api/map', (req, res) => {
   res.json(Object.values(db.walls)
@@ -363,6 +423,7 @@ app.get('/api/walls/:slug', (req, res) => {
     setup: !!wall.setup,
     ...(wall.geo ? { geo: wall.geo } : {}),
     ...(wall.photo ? { photo: wall.photo } : {}),
+    ...(wall.scene ? { scene: wall.scene } : {}),
   });
 });
 
@@ -396,14 +457,22 @@ app.post('/api/walls/:slug/setup', setupLimit, async (req, res) => {
     try { photo = await fetchPlacePhoto(slug, geo); if (!photo) photoNote = 'Não achei fotos abertas perto desse lugar. O muro foi criado com a textura escolhida.'; }
     catch (e) { console.error('photo:', e.message); photoNote = 'Não consegui buscar a foto agora. O muro foi criado com a textura escolhida.'; }
   }
+  // optional street scene from OpenStreetMap (needs a place)
+  let scene = null, sceneNote;
+  if ((req.body || {}).scene === true) {
+    if (!geo) return res.status(400).json({ error: 'O cenário precisa de um lugar.' });
+    try { scene = await fetchScene(slug, geo); if (!scene) sceneNote = 'O OpenStreetMap não tem prédios nem ruas mapeados ali. O muro foi criado sem cenário.'; }
+    catch (e) { console.error('scene:', e.message); sceneNote = 'Não consegui buscar o cenário agora. O muro foi criado sem ele.'; }
+  }
   const again = db.walls[slug]; // someone may have created it while we were fetching
   if (again && again.setup) return res.status(409).json({ error: 'Esse muro já existe.' });
   wall.background = bg;
   if (geo) wall.geo = geo;
   if (photo) wall.photo = photo;
+  if (scene) wall.scene = scene;
   wall.setup = true;
   save();
-  res.status(201).json({ slug, background: wall.background, ...(wall.geo ? { geo: wall.geo } : {}), ...(wall.photo ? { photo: wall.photo } : {}), ...(photoNote ? { photoNote } : {}) });
+  res.status(201).json({ slug, background: wall.background, ...(wall.geo ? { geo: wall.geo } : {}), ...(wall.photo ? { photo: wall.photo } : {}), ...(wall.scene ? { scene: wall.scene } : {}), ...((photoNote || sceneNote) ? { photoNote: [photoNote, sceneNote].filter(Boolean).join(' ') } : {}) });
 });
 
 app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {

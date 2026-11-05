@@ -312,3 +312,5 @@ button:disabled { opacity: .5; cursor: wait; }
 .classic .modal { background: #fff; color: #333; border: 1px solid #555; border-radius: 0; box-shadow: 0 3px 8px rgba(0,0,0,.5); }
 .classic .modal h2 { background: #6d84b4; color: #fff; margin: -24px -24px 14px; padding: 6px 10px; font-size: 13px; }
 .classic .zoombar button { border-radius: 3px; }
+
+.v3d-osm { position: absolute; left: 12px; top: 46px; z-index: 2; color: #fff; font: 11px system-ui, sans-serif; background: #0008; padding: 2px 8px; border-radius: 6px; pointer-events: none; }

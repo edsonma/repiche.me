@@ -59,6 +59,8 @@ createApp({
     const setupPlace = ref('');
     const geoBusy = ref(false);
     const wallGeo = ref(null);         // place of the wall being viewed
+    const setupScene = ref(false);     // rebuild the neighbourhood from OpenStreetMap in the 3D view
+    const wallScene = ref(null);
     const setupPhoto = ref(false);     // use an open photo of the place as the surface
     const wallPhoto = ref(null);       // { creator, year } when this wall's surface is a photo
     const photoUrl = computed(() => (wallPhoto.value ? `/api/walls/${encodeURIComponent(slug.value)}/photo` : ''));
@@ -72,7 +74,7 @@ createApp({
         () => { geoBusy.value = false; setupError.value = 'Não consegui pegar sua localização (permissão negada?).'; },
         { maximumAge: 600000, timeout: 15000 });
     }
-    const clearLocation = () => { setupGeo.value = null; setupPlace.value = ''; setupPhoto.value = false; };
+    const clearLocation = () => { setupGeo.value = null; setupPlace.value = ''; setupPhoto.value = false; setupScene.value = false; };
 
     // ---- map of walls that have a place (OpenStreetMap tiles via Leaflet, served from our own server) ----
     const showMap = ref(false);
@@ -122,7 +124,10 @@ createApp({
       opening3d.value = true;
       try {
         const mod = await import('/viewer3d.js');
+        let cityData = null;
+        if (wallScene.value) cityData = await api(`/api/walls/${encodeURIComponent(slug.value)}/scene`).catch(() => null);
         viewer3d = await mod.open3D({
+          cityData,
           posts: visiblePosts.value.map((p) => ({ ...p })),
           opacity: (p) => fade(p),
           background: { ...background.value },
@@ -235,6 +240,7 @@ createApp({
         wallSetup.value = w.setup !== false;
         wallGeo.value = w.geo || null;
         wallPhoto.value = w.photo || null;
+        wallScene.value = w.scene || null;
         clearLocation();
         setupDismissed.value = false;
         setupError.value = ''; existsName.value = '';
@@ -428,10 +434,10 @@ createApp({
         const made = await api(`/api/walls/${encodeURIComponent(name)}/setup`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ background: background.value, ...(setupGeo.value ? { geo: { ...setupGeo.value, place: setupPlace.value.trim() } } : {}), ...(setupGeo.value && setupPhoto.value ? { photo: true } : {}) }),
+          body: JSON.stringify({ background: background.value, ...(setupGeo.value ? { geo: { ...setupGeo.value, place: setupPlace.value.trim() } } : {}), ...(setupGeo.value && setupPhoto.value ? { photo: true } : {}), ...(setupGeo.value && setupScene.value ? { scene: true } : {}) }),
         });
         if (made && made.photoNote) error.value = made.photoNote;
-        if (name === slug.value) { wallSetup.value = true; wallGeo.value = (made && made.geo) || null; wallPhoto.value = (made && made.photo) || null; } // same URL: just close the popup
+        if (name === slug.value) { wallSetup.value = true; wallGeo.value = (made && made.geo) || null; wallPhoto.value = (made && made.photo) || null; wallScene.value = (made && made.scene) || null; } // same URL: just close the popup
         else go(name);                                    // new name: open that wall
       } catch (e) {
         // that wall already exists: don't make the person read an error, just take them there
@@ -501,7 +507,7 @@ createApp({
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
       visiblePosts, selectedId, toggleSelect, support, isSupported, timeLeft,
-      classic, toggleClassic, setupGeo, setupPlace, setupPhoto, wallPhoto, photoUrl, photoCredit, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapEl, mapWalls, openMap, closeMap,
+      classic, toggleClassic, setupGeo, setupPlace, setupPhoto, setupScene, wallPhoto, photoUrl, photoCredit, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapEl, mapWalls, openMap, closeMap,
       opening3d, open3D, palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,

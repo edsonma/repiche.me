@@ -128,6 +128,7 @@
             <template v-else>
               <input v-model="setupPlace" maxlength="40" placeholder="Nome do lugar (ex.: Praça da Sé)" autocomplete="off" aria-label="Nome do lugar">
               <small>Região aprox. {{ setupGeo.lat }}, {{ setupGeo.lon }} · <a href="#" @click.prevent="clearLocation">remover</a></small>
+              <label class="photoopt"><input type="checkbox" v-model="setupScene"> Montar o cenário do lugar no 3D <small>(prédios e ruas do OpenStreetMap)</small></label>
               <label class="photoopt" v-if="meta.photos"><input type="checkbox" v-model="setupPhoto"> Usar uma foto aberta do lugar como parede <small>(Mapillary, CC BY-SA)</small></label>
             </template>
           </div>

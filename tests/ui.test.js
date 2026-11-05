@@ -183,6 +183,37 @@ const J = { 'Content-Type': 'application/json' };
   check('"moderno" goes back', !(await cp.$('.stage.classic')));
   await cp.close();
 
+  // ---------- OSM street scene in 3D ----------
+  { const http = require('http');
+  const fk = http.createServer((rq, rs) => {
+    rq.resume(); rq.on('end', () => {
+      const g = (pts) => pts.map(([la, lo]) => ({ lat: -23.55 + la, lon: -46.63 + lo }));
+      rs.setHeader('Content-Type', 'application/json');
+      rs.end(JSON.stringify({ elements: [
+        { type: 'way', tags: { building: 'yes', height: '12' }, geometry: g([[0.0012, -0.0006], [0.0012, 0.0000], [0.0018, 0.0000], [0.0018, -0.0006]]) },
+        { type: 'way', tags: { building: 'house' }, geometry: g([[0.0014, 0.0006], [0.0014, 0.0011], [0.0019, 0.0011], [0.0019, 0.0006]]) },
+        { type: 'way', tags: { highway: 'residential' }, geometry: g([[0.0008, -0.0015], [0.0008, 0.0015]]) },
+      ] }));
+    });
+  });
+  await new Promise((ok) => fk.listen(0, ok));
+  const so = await startServer({ env: { OVERPASS_API: `http://localhost:${fk.address().port}/x` } });
+  await fetch(so.base + '/api/walls/centro/setup', { method: 'POST', headers: J, body: JSON.stringify({ background: { color: '#2c2c30', texture: 'concrete' }, geo: { lat: -23.55, lon: -46.63, place: 'Centro' }, scene: true }) });
+  const o3 = await b.newPage(); watch(o3);
+  await o3.setViewport({ width: 1000, height: 700 });
+  await o3.goto(so.base + '/centro', { waitUntil: 'networkidle0' });
+  const gl2 = await o3.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2'); } catch { return false; } });
+  if (gl2) {
+    await o3.click('.icon3d');
+    await o3.waitForSelector('.v3d canvas', { timeout: 30000 });
+    await sleep(3000);
+    const cityInfo = await o3.$eval('.v3d', (e) => e.dataset.city);
+    check('3D draws the OSM buildings and roads around the wall', /^2,\d+$/.test(cityInfo) && +cityInfo.split(',')[1] >= 1, cityInfo);
+    check('OpenStreetMap credit is shown in 3D', /OpenStreetMap/.test(await o3.$eval('.v3d-osm', (e) => e.textContent)));
+    check('3D with a scene: no CSP violations or page errors', bad.length === 0, bad.join(' | '));
+  } else console.log('SKIP  OSM scene 3D: no WebGL');
+  await o3.close(); await so.stop(); fk.close(); }
+
   // ---------- 3D (skipped where the browser has no WebGL) ----------
   const hasGL = await p.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2') || !!document.createElement('canvas').getContext('webgl'); } catch { return false; } });
   if (!hasGL) { console.log('SKIP  3D checks: no WebGL in this browser'); }

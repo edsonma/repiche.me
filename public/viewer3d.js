@@ -231,7 +231,7 @@ export function createMusic() {
   };
 }
 
-export async function open3D({ posts, background, wallW, wallH, fonts = [], place = '', photoUrl = '', opacity = () => 1, onClose = () => {} }) {
+export async function open3D({ posts, background, wallW, wallH, fonts = [], place = '', photoUrl = '', cityData = null, opacity = () => 1, onClose = () => {} }) {
   const isTouch = matchMedia('(pointer: coarse)').matches;
   const boardH = Math.min(MAX_H_PX, Math.max(MIN_H_PX, Math.ceil(wallH)));
   const Wm = wallW / PX_PER_M, Hm = boardH / PX_PER_M;
@@ -248,6 +248,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     <div class="v3d-cardwrap" hidden></div>
     <button class="v3d-music" aria-label="Música" title="Música ligada/desligada">🔊</button>
     ${place ? '<div class="v3d-place"></div>' : ''}
+    ${cityData ? '<div class="v3d-osm">Mapa © colaboradores do OpenStreetMap (ODbL)</div>' : ''}
     <div class="v3d-hint">${isTouch ? 'Círculo à esquerda: andar · arraste à direita: olhar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
     ${isTouch ? '<div class="v3d-joy" aria-label="Andar"><div class="knob"></div></div><button class="v3d-jump" aria-label="Pular">⤒</button>' : ''}`;
   document.body.appendChild(root);
@@ -362,6 +363,71 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     seg.position.set(-Wm / 2 + (x0 + sw / 2) / PX_PER_M, Hm / 2, 0); seg.castShadow = true; seg.receiveShadow = true; scene.add(seg);
   }
 
+  // ---- the street around the place, rebuilt from OpenStreetMap data (flat roads + extruded buildings) ----
+  // Two merged meshes only. Anything that would overlap the wall and its walkway is left out, so the
+  // wall stands in a clearing of the real neighbourhood.
+  if (cityData && Array.isArray(cityData.b)) {
+    const zone = { x0: -Wm / 2 - 6, x1: Wm / 2 + 6, z0: -3, z1: 16 };
+    const inZone = (x, z) => x > zone.x0 && x < zone.x1 && z > zone.z0 && z < zone.z1;
+    const num = (n) => typeof n === 'number' && Number.isFinite(n);
+    const pos = [], nor = [], col = [];
+    let nB = 0, nR = 0;
+    const pushGeo = (g, c) => {
+      const g2 = g.index ? g.toNonIndexed() : g;
+      const p = g2.attributes.position.array, n = g2.attributes.normal.array;
+      for (let i = 0; i < p.length; i++) { pos.push(p[i]); nor.push(n[i]); }
+      for (let i = 0; i < p.length / 3; i++) col.push(c.r, c.g, c.b);
+      g.dispose(); if (g2 !== g) g2.dispose();
+    };
+    const pal = [0xd9c8a9, 0xc9b79c, 0xe2d6c1, 0xb9a58a, 0xd4b8a0, 0xcfd2c4, 0xc7a9a0];
+    for (const [h, pts] of cityData.b.slice(0, 500)) {
+      if (!num(h) || !Array.isArray(pts) || pts.length < 6 || pts.length > 80 || !pts.every(num)) continue;
+      let xs = 0, zs = 0;
+      for (let i = 0; i < pts.length; i += 2) { xs += pts[i]; zs += pts[i + 1]; }
+      const cx = xs / (pts.length / 2), cz = zs / (pts.length / 2);
+      let hit = inZone(cx, cz);
+      for (let i = 0; i < pts.length && !hit; i += 2) hit = inZone(pts[i], pts[i + 1]);
+      if (hit) continue;
+      try {
+        const sh = new THREE.Shape();
+        for (let i = 0; i < pts.length; i += 2) (i ? sh.lineTo : sh.moveTo).call(sh, pts[i], -pts[i + 1]);
+        const eg = new THREE.ExtrudeGeometry(sh, { depth: Math.min(120, Math.max(2.5, h)), bevelEnabled: false });
+        eg.rotateX(-Math.PI / 2);
+        const c = new THREE.Color(pal[Math.abs(Math.floor(cx * 7 + cz * 3)) % pal.length]);
+        pushGeo(eg, c); nB++;
+      } catch { /* a broken footprint: skip it */ }
+    }
+    if (pos.length) {
+      const bg = track(new THREE.BufferGeometry());
+      bg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      bg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      bg.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+      const bm = new THREE.Mesh(bg, track(new THREE.MeshLambertMaterial({ vertexColors: true })));
+      bm.receiveShadow = true; scene.add(bm);
+    }
+    // roads: one flat quad per segment, slightly above the grass
+    const rp = [];
+    for (const [w, pts] of (cityData.r || []).slice(0, 200)) {
+      if (!num(w) || !Array.isArray(pts) || pts.length < 4 || pts.length > 80 || !pts.every(num)) continue;
+      const half = Math.min(6, Math.max(0.5, w / 2));
+      for (let i = 0; i + 3 < pts.length; i += 2) {
+        const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
+        if (inZone((ax + bx) / 2, (az + bz) / 2) || inZone(ax, az) || inZone(bx, bz)) continue;
+        const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1, nx = (-dz / len) * half, nz = (dx / len) * half;
+        const y = w < 3 ? 0.03 : 0.02;
+        nR++; rp.push(ax + nx, y, az + nz, bx + nx, y, bz + nz, ax - nx, y, az - nz, bx + nx, y, bz + nz, bx - nx, y, bz - nz, ax - nx, y, az - nz);
+      }
+    }
+    if (rp.length) {
+      const rg = track(new THREE.BufferGeometry());
+      rg.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
+      rg.computeVertexNormals();
+      const rm = new THREE.Mesh(rg, track(new THREE.MeshLambertMaterial({ color: 0x4a4a4f, side: THREE.DoubleSide })));
+      rm.receiveShadow = true; scene.add(rm);
+    }
+    root.dataset.city = `${nB},${nR}`; // buildings, road segments drawn (used by tests)
+  }
+
   // ---- blocky trees, instanced (3 draw calls for all of them); their shadows fall across the wall ----
   const blockers = []; // circles you can't walk through: { x, z, r }
   const treeSpots = [];
@@ -371,7 +437,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     const z = 4.5 + tr() * 6, s2 = 1.1 + tr() * 0.6;
     if (Math.hypot(x - NPC_X, z - NPC_Z) > 3 && Math.hypot(x, z - 7.5) > 2.5) treeSpots.push({ x, z, s: s2 });
   }
-  for (let x = -Wm / 2 - 4; x < Wm / 2 + 4; x += 4 + tr() * 6) treeSpots.push({ x, z: -(4 + tr() * 14), s: 1.3 + tr() * 0.7 }); // behind (seen over the wall)
+  if (!cityData) for (let x = -Wm / 2 - 4; x < Wm / 2 + 4; x += 4 + tr() * 6) treeSpots.push({ x, z: -(4 + tr() * 14), s: 1.3 + tr() * 0.7 }); // behind (seen over the wall)
   const trunkM = track(new THREE.MeshLambertMaterial({ color: 0x6b4a2b })), leafM = track(new THREE.MeshLambertMaterial({ color: 0x3f8a3a }));
   const trunks = new THREE.InstancedMesh(track(new THREE.BoxGeometry(0.4, 2.4, 0.4)), trunkM, treeSpots.length);
   const leaves = new THREE.InstancedMesh(track(new THREE.BoxGeometry(2, 1.6, 2)), leafM, treeSpots.length);

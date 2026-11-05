@@ -227,6 +227,40 @@ const TOKEN = 'correct-horse-battery-staple';
   check('without a token the option is off and requests for it are refused', (await (await fetch(ns.base + '/api/meta')).json()).photos === false && (await fetch(`${ns.base}/api/walls/xx/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, geo: { lat: 1, lon: 1 }, photo: true }) })).status === 400);
   await ns.stop();
 
+  // ---- OpenStreetMap street scene (fake Overpass) ----
+  { const http2 = require('http');
+  const hits2 = [];
+  const fk = http2.createServer((rq, rs) => {
+    let body = ''; rq.on('data', (d) => { body += d; });
+    rq.on('end', () => {
+      hits2.push(decodeURIComponent(body));
+      const g = (pts) => pts.map(([la, lo]) => ({ lat: -23.55 + la, lon: -46.63 + lo }));
+      const els = [
+        { type: 'way', tags: { building: 'yes', 'building:levels': '5' }, geometry: g([[0.0012, -0.0006], [0.0012, 0.0000], [0.0018, 0.0000], [0.0018, -0.0006]]) },
+        { type: 'way', tags: { building: 'house' }, geometry: g([[0, 0], [0.0001, 0]]) },
+        { type: 'way', tags: { highway: 'residential' }, geometry: g([[0.0008, -0.0015], [0.0008, 0.0015]]) },
+        { type: 'way', tags: { highway: 'weird' }, geometry: g([[0, 0], [0.001, 0]]) },
+        { type: 'way', tags: { building: 'yes' }, geometry: [{ lat: 'x', lon: 1 }] },
+        { type: 'way', tags: { building: 'yes' }, geometry: g([[0, 5]]) },
+        { type: 'node', id: 1 },
+      ];
+      rs.setHeader('Content-Type', 'application/json'); rs.end(JSON.stringify(rq.url === '/empty' ? { elements: [] } : { elements: els }));
+    });
+  });
+  await new Promise((ok) => fk.listen(0, ok));
+  const os = await startServer({ env: { OVERPASS_API: `http://localhost:${fk.address().port}/x` } });
+  const setupO = (slug, body) => fetch(`${os.base}/api/walls/${slug}/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, ...body }) });
+  check('a scene needs a place', (await setupO('semlugar2', { scene: true })).status === 400);
+  await sleep(2200);
+  let or = await setupO('bairro', { geo: { lat: -23.55, lon: -46.63, place: 'Bairro' }, scene: true });
+  let oj = await or.json();
+  check('wall created with an OSM scene (1 building + 1 road kept, junk dropped)', or.status === 201 && oj.scene && oj.scene.buildings === 1 && oj.scene.roads === 1, JSON.stringify(oj));
+  check('Overpass is asked once, with a bbox around the place', hits2.length === 1 && /way\["building"\]/.test(hits2[0]) && /way\["highway"\]/.test(hits2[0]));
+  const sc = await (await fetch(`${os.base}/api/walls/bairro/scene`)).json();
+  check('scene JSON is compact metres around the place (north = -z)', sc.b.length === 1 && sc.b[0][0] === 15 && sc.b[0][1].length === 8 && sc.b[0][1].every(Number.isFinite) && sc.b[0][1][1] < 0, JSON.stringify(sc).slice(0, 160));
+  check('GET wall flags the scene; unknown walls have none', !!(await (await fetch(`${os.base}/api/walls/bairro`)).json()).scene && (await fetch(`${os.base}/api/walls/nada/scene`)).status === 404 && (await fetch(`${os.base}/api/walls/__proto__/scene`)).status === 404);
+  await os.stop(); fk.close(); }
+
   // ---- persistence ----
   const dir = s.dir;
   s = await startServer({ dir });
