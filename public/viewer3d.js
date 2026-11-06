@@ -21,6 +21,33 @@ const SPEED = 3;            // m/s
 // ---------- tiny seeded RNG so textures are the same every time ----------
 function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
 
+// ---------- a generic town street for walls without a place: same format as the OSM data ----------
+// (map metres; the wall's side of the map is z<0, the street lies at z>0)
+function genericCity() {
+  const r = rng(2011), b = [], rd = [];
+  rd.push([9, [-160, 6, 160, 6]], [9, [-160, 96, 160, 96]], [7, [-48, 6, -48, 160]], [7, [62, 6, 62, 160]]);
+  for (const [z0, depthMax] of [[13, 22], [37, 24], [103, 22]]) {
+    for (let x = -150; x < 150;) {
+      const w = 8 + r() * 9, d = 12 + r() * (depthMax - 12), h = 6 + Math.floor(r() * 7) * 3.2;
+      if (Math.abs(x + w / 2 + 48) < 9 || Math.abs(x + w / 2 - 62) < 9) { x += 10; continue; } // leave the cross streets open
+      b.push([h, [x, z0, x + w, z0, x + w, z0 + d, x, z0 + d]]);
+      x += w + (r() < 0.25 ? 4 + r() * 6 : 0.6);
+    }
+  }
+  return { b, r: rd };
+}
+// 3 m x 3 m facade cell with a window; tinted per building by vertex colours
+function windowTexture() {
+  const c = document.createElement('canvas'); c.width = c.height = 96;
+  const g = c.getContext('2d');
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 96, 96);
+  g.fillStyle = '#9fb4c4'; g.fillRect(22, 18, 52, 50);        // glass
+  g.fillStyle = '#6d8296'; g.fillRect(22, 18, 52, 12);        // darker top (sky reflection)
+  g.fillStyle = '#e8e8e8'; g.fillRect(22, 66, 52, 5);         // sill
+  g.strokeStyle = '#d6d6d6'; g.lineWidth = 3; g.strokeRect(21, 17, 54, 52); g.beginPath(); g.moveTo(48, 18); g.lineTo(48, 68); g.stroke();
+  return c;
+}
+
 // ---------- procedural wall textures drawn over the wall color (canvas 2D, no image files) ----------
 function paintSurface(ctx, W, H, texture, color, seed = 7) {
   const r = rng(seed);
@@ -246,7 +273,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     <button class="v3d-talk" hidden>💬 Falar com ele${isTouch ? '' : ' <kbd>E</kbd>'}</button>
     <div class="v3d-bubble" hidden></div>
     <div class="v3d-cardwrap" hidden></div>
-    ${cityData ? '<button class="v3d-turn" title="Virar entre o muro e a rua">🏙 Ver a rua</button>' : ''}
+    <button class="v3d-turn" title="Virar entre o muro e a rua">🏙 Ver a rua</button>
     <button class="v3d-music" aria-label="Música" title="Música ligada/desligada">🔊</button>
     ${place ? '<div class="v3d-place"></div>' : ''}
     ${cityData ? '<div class="v3d-osm">Mapa © colaboradores do OpenStreetMap (ODbL)</div>' : ''}
@@ -367,26 +394,28 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
   // ---- the street around the place, rebuilt from OpenStreetMap data (flat roads + extruded buildings) ----
   // Two merged meshes only. Anything that would overlap the wall and its walkway is left out, so the
   // wall stands in a clearing of the real neighbourhood.
-  if (cityData && Array.isArray(cityData.b)) {
+  const city = cityData || genericCity();
+  if (city && Array.isArray(city.b)) {
     const ZSHIFT = 16; // the map is moved so its centre is on the far edge of the walkway: the street lies in front of you, behind your back
     // The wall's side of the map is hidden behind the wall, so turn the map 180 degrees if its busier half is there
     const heavy = (a) => a.reduce((n, [, p]) => n + (Array.isArray(p) && p.length > 1 && p[1] > 0 ? 1 : -1), 0);
-    const FLIP = heavy(cityData.b) < 0 ? -1 : 1;
+    const FLIP = heavy(city.b) < 0 ? -1 : 1;
     const place2 = (pts) => pts.map((n, i) => (i % 2 ? FLIP * n + ZSHIFT : FLIP * n));
     const zone = { x0: -Wm / 2 - 6, x1: Wm / 2 + 6, z0: -3, z1: 16 };
     const inZone = (x, z) => x > zone.x0 && x < zone.x1 && z > zone.z0 && z < zone.z1;
     const num = (n) => typeof n === 'number' && Number.isFinite(n);
-    const pos = [], nor = [], col = [];
+    const pos = [], nor = [], col = [], uvs = [];
     let nB = 0, nR = 0;
     const pushGeo = (g, c) => {
       const g2 = g.index ? g.toNonIndexed() : g;
       const p = g2.attributes.position.array, n = g2.attributes.normal.array;
       for (let i = 0; i < p.length; i++) { pos.push(p[i]); nor.push(n[i]); }
       for (let i = 0; i < p.length / 3; i++) col.push(c.r, c.g, c.b);
+      const u = g2.attributes.uv.array; for (let i = 0; i < u.length; i++) uvs.push(u[i]);
       g.dispose(); if (g2 !== g) g2.dispose();
     };
     const pal = [0xd9c8a9, 0xc9b79c, 0xe2d6c1, 0xb9a58a, 0xd4b8a0, 0xcfd2c4, 0xc7a9a0];
-    for (let [h, pts] of cityData.b.slice(0, 500)) {
+    for (let [h, pts] of city.b.slice(0, 500)) {
       if (!num(h) || !Array.isArray(pts) || pts.length < 6 || pts.length > 80 || !pts.every(num)) continue;
       let xs = 0, zs = 0;
       pts = place2(pts);
@@ -409,28 +438,43 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
       bg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       bg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
       bg.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-      const bm = new THREE.Mesh(bg, track(new THREE.MeshLambertMaterial({ vertexColors: true })));
+      bg.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+      const wt = track(new THREE.CanvasTexture(windowTexture()));
+      wt.wrapS = wt.wrapT = THREE.RepeatWrapping; wt.repeat.set(1 / 3, 1 / 3); wt.colorSpace = THREE.SRGBColorSpace; wt.anisotropy = 4;
+      const bm = new THREE.Mesh(bg, track(new THREE.MeshLambertMaterial({ vertexColors: true, map: wt })));
       bm.receiveShadow = true; scene.add(bm);
     }
-    // roads: one flat quad per segment, slightly above the grass
-    const rp = [];
-    for (let [w, pts] of (cityData.r || []).slice(0, 200)) {
+    // roads like a street view: sidewalk edge, asphalt, and dashed centre line on the wider ones
+    const rp = [], rc = [];
+    const quad = (ax, az, bx, bz, half, y, c) => {
+      const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1, nx = (-dz / len) * half, nz = (dx / len) * half;
+      rp.push(ax + nx, y, az + nz, bx + nx, y, bz + nz, ax - nx, y, az - nz, bx + nx, y, bz + nz, bx - nx, y, bz - nz, ax - nx, y, az - nz);
+      for (let k = 0; k < 6; k++) rc.push(c.r, c.g, c.b);
+    };
+    const SIDE = new THREE.Color(0xbdbab0), ASPH = new THREE.Color(0x45464b), PATH = new THREE.Color(0xc9b99a), LINE = new THREE.Color(0xe9e4c8);
+    for (let [w, pts] of (city.r || []).slice(0, 200)) {
       if (!num(w) || !Array.isArray(pts) || pts.length < 4 || pts.length > 80 || !pts.every(num)) continue;
       pts = place2(pts);
       const half = Math.min(6, Math.max(0.5, w / 2));
       for (let i = 0; i + 3 < pts.length; i += 2) {
         const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
         if (inZone((ax + bx) / 2, (az + bz) / 2) || inZone(ax, az) || inZone(bx, bz)) continue;
-        const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1, nx = (-dz / len) * half, nz = (dx / len) * half;
-        const y = w < 3 ? 0.03 : 0.02;
-        nR++; rp.push(ax + nx, y, az + nz, bx + nx, y, bz + nz, ax - nx, y, az - nz, bx + nx, y, bz + nz, bx - nx, y, bz - nz, ax - nx, y, az - nz);
+        nR++;
+        if (w < 3) { quad(ax, az, bx, bz, half, 0.03, PATH); continue; }
+        quad(ax, az, bx, bz, half + 1.6, 0.03, SIDE);
+        quad(ax, az, bx, bz, half, 0.06, ASPH);
+        if (w >= 6) { // dashes: 2 m painted, 3 m gap
+          const len = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / len, uz = (bz - az) / len;
+          for (let t = 0; t + 2 <= len && t < 400; t += 5) quad(ax + ux * t, az + uz * t, ax + ux * (t + 2), az + uz * (t + 2), 0.1, 0.09, LINE);
+        }
       }
     }
     if (rp.length) {
       const rg = track(new THREE.BufferGeometry());
       rg.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
+      rg.setAttribute('color', new THREE.Float32BufferAttribute(rc, 3));
       rg.computeVertexNormals();
-      const rm = new THREE.Mesh(rg, track(new THREE.MeshLambertMaterial({ color: 0x4a4a4f, side: THREE.DoubleSide })));
+      const rm = new THREE.Mesh(rg, track(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
       rm.receiveShadow = true; scene.add(rm);
     }
     root.dataset.city = `${nB},${nR}`; // buildings, road segments drawn (used by tests)

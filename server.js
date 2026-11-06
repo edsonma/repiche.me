@@ -369,10 +369,24 @@ async function fetchScene(slug, geo) {
   fs.writeFileSync(path.join(SCENE_DIR, slug + '.json'), data);
   return { buildings: b.length, roads: rd.length };
 }
-app.get('/api/walls/:slug/scene', (req, res) => {
+const sceneJobs = new Map(), sceneFailed = new Map();
+async function ensureScene(slug, w) {
+  if ((sceneFailed.get(slug) || 0) > Date.now()) return;
+  if (!sceneJobs.has(slug)) {
+    sceneJobs.set(slug, (async () => {
+      try { const sc = await fetchScene(slug, w.geo); if (sc) { w.scene = sc; save(); } else sceneFailed.set(slug, Date.now() + 6 * 3600e3); }
+      catch (e) { console.error('scene:', e.message); sceneFailed.set(slug, Date.now() + 10 * 60e3); }
+      finally { sceneJobs.delete(slug); }
+    })());
+  }
+  await sceneJobs.get(slug);
+}
+app.get('/api/walls/:slug/scene', async (req, res) => {
   const slug = req.params.slug.toLowerCase();
   const w = validSlug(slug) && db.walls[slug];
-  if (!w || !w.scene) return res.status(404).end();
+  if (!w) return res.status(404).end();
+  if (!w.scene && w.geo) await ensureScene(slug, w); // walls made before scenes existed get theirs on first use
+  if (!w.scene) return res.status(404).end();
   res.set('Cache-Control', 'public, max-age=86400').type('application/json').sendFile(path.join(SCENE_DIR, slug + '.json'), (e) => { if (e && !res.headersSent) res.status(404).end(); });
 });
 

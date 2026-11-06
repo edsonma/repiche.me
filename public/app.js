@@ -59,7 +59,7 @@ createApp({
     const setupPlace = ref('');
     const geoBusy = ref(false);
     const wallGeo = ref(null);         // place of the wall being viewed
-    const setupScene = ref(false);     // rebuild the neighbourhood from OpenStreetMap in the 3D view
+    const setupScene = ref(true);      // rebuild the neighbourhood from OpenStreetMap in the 3D view
     const wallScene = ref(null);
     const setupPhoto = ref(false);     // use an open photo of the place as the surface
     const wallPhoto = ref(null);       // { creator, year } when this wall's surface is a photo
@@ -74,7 +74,7 @@ createApp({
         () => { geoBusy.value = false; setupError.value = 'Não consegui pegar sua localização (permissão negada?).'; },
         { maximumAge: 600000, timeout: 15000 });
     }
-    const clearLocation = () => { setupGeo.value = null; setupPlace.value = ''; setupPhoto.value = false; setupScene.value = false; };
+    const clearLocation = () => { setupGeo.value = null; setupPlace.value = ''; setupPhoto.value = false; setupScene.value = true; };
 
     // ---- map of walls that have a place (OpenStreetMap tiles via Leaflet, served from our own server) ----
     const showMap = ref(false);
@@ -125,7 +125,7 @@ createApp({
       try {
         const mod = await import('/viewer3d.js');
         let cityData = null;
-        if (wallScene.value) cityData = await api(`/api/walls/${encodeURIComponent(slug.value)}/scene`).catch(() => null);
+        if (wallScene.value || wallGeo.value) cityData = await api(`/api/walls/${encodeURIComponent(slug.value)}/scene`).catch(() => null);
         viewer3d = await mod.open3D({
           cityData,
           posts: visiblePosts.value.map((p) => ({ ...p })),

@@ -228,6 +228,7 @@ const J = { 'Content-Type': 'application/json' };
   await p.waitForSelector('.v3d canvas', { timeout: 30000 });
   await sleep(4000);
   check('3D view opens and renders a canvas', await p.$eval('.v3d canvas', (c) => c.width > 0 && c.height > 0));
+  check('a wall with no place still gets a street (generic town), not the old empty field', +(await p.$eval('.v3d', (e) => e.dataset.city)).toString().split(',')[0] > 10 && !(await p.$('.v3d-osm')));
   check('3D opened without CSP violations or page errors', bad.length === 0, bad.join(' | '));
   // touch controls: joystick on the left, free look on the right, Minecraft directions
   const view = () => p.$eval('.v3d', (e) => e.dataset.view.split(',').map(Number)); // x, z, yaw, pitch

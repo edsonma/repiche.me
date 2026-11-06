@@ -259,6 +259,11 @@ const TOKEN = 'correct-horse-battery-staple';
   const sc = await (await fetch(`${os.base}/api/walls/bairro/scene`)).json();
   check('scene JSON is compact metres around the place (north = -z)', sc.b.length === 1 && sc.b[0][0] === 15 && sc.b[0][1].length === 8 && sc.b[0][1].every(Number.isFinite) && sc.b[0][1][1] < 0, JSON.stringify(sc).slice(0, 160));
   check('GET wall flags the scene; unknown walls have none', !!(await (await fetch(`${os.base}/api/walls/bairro`)).json()).scene && (await fetch(`${os.base}/api/walls/nada/scene`)).status === 404 && (await fetch(`${os.base}/api/walls/__proto__/scene`)).status === 404);
+  await sleep(2200);
+  await setupO('antigo', { geo: { lat: -23.55, lon: -46.63 } }); // has a place but no scene (like walls made before scenes existed)
+  const lz = await fetch(`${os.base}/api/walls/antigo/scene`);
+  check('a wall with a place but no scene gets one on first request (once)', lz.status === 200 && (await lz.json()).b.length === 1 && (await fetch(`${os.base}/api/walls/antigo/scene`)).status === 200 && hits2.length === 2, String(hits2.length));
+  check('a wall with no place has no scene', (await fetch(`${os.base}/api/walls/semlugar2/scene`)).status === 404);
   await os.stop(); fk.close(); }
 
   // ---- persistence ----
