@@ -166,6 +166,10 @@
       <div class="modal-backdrop" v-if="showMap" @click.self="closeMap">
         <div class="modal mapmodal">
           <h2>Muros no mapa</h2>
+          <div class="maptabs" role="tablist">
+            <button type="button" :class="{ on: mapKind === 'map' }" @click="setMapKind('map')">Mapa</button>
+            <button type="button" :class="{ on: mapKind === 'sat' }" @click="setMapKind('sat')">Satélite</button>
+          </div>
           <div class="map" ref="mapEl"></div>
           <small v-if="!mapWalls.length">Nenhum muro com lugar ainda. Crie um muro e marque o lugar!</small>
           <button class="close" @click="closeMap">fechar</button>

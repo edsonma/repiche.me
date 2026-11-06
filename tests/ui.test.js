@@ -164,6 +164,10 @@ const J = { 'Content-Type': 'application/json' };
   await g.click('.mapmodal .wallpin');
   await g.waitForSelector('.leaflet-popup a');
   check('pin popup links to the wall and shows the place', /Copacabana/.test(await g.$eval('.leaflet-popup', (e) => e.textContent)) && (await g.$eval('.leaflet-popup a', (a) => a.getAttribute('href'))) === '/praia');
+  await g.click('.maptabs button:last-child'); await sleep(500);
+  check('"Satélite" switches the map to satellite tiles (and the choice is remembered)', (await g.$$eval('.mapmodal .leaflet-tile-pane img', (l) => l.some((i) => /arcgisonline/.test(i.src)))) && (await g.evaluate(() => localStorage.getItem('repiche.mapkind'))) === 'sat');
+  await g.click('.maptabs button:first-child'); await sleep(500);
+  check('"Mapa" switches back to street tiles', await g.$$eval('.mapmodal .leaflet-tile-pane img', (l) => l.some((i) => /openstreetmap/.test(i.src))));
   check('pin popup offers "Ir ao 3D"', !!(await g.$('.leaflet-popup .pin3d')));
   const glG = await g.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2'); } catch { return false; } });
   if (glG) {
@@ -199,6 +203,8 @@ const J = { 'Content-Type': 'application/json' };
         { type: 'way', tags: { building: 'yes', height: '12' }, geometry: g([[0.0012, -0.0006], [0.0012, 0.0000], [0.0018, 0.0000], [0.0018, -0.0006]]) },
         { type: 'way', tags: { building: 'house' }, geometry: g([[0.0014, 0.0006], [0.0014, 0.0011], [0.0019, 0.0011], [0.0019, 0.0006]]) },
         { type: 'way', tags: { highway: 'residential' }, geometry: g([[0.0008, -0.0015], [0.0008, 0.0015]]) },
+        { type: 'way', tags: { natural: 'coastline' }, geometry: g([[0.0030, -0.0020], [0.0030, 0.0], [0.0030, 0.0020]]) },
+        { type: 'way', tags: { natural: 'beach' }, geometry: g([[0.0024, 0.0], [0.0024, 0.0008], [0.0029, 0.0008], [0.0029, 0.0]]) },
       ] }));
     });
   });
@@ -223,6 +229,7 @@ const J = { 'Content-Type': 'application/json' };
     if (process.env.SHOT) await o3.screenshot({ path: process.env.SHOT });
     await o3.click('.v3d-turn'); await sleep(300);
     check('...and back to the wall', Math.abs(+(await o3.$eval('.v3d', (e) => e.dataset.view)).split(',')[2]) < 0.05);
+    check('sea, sand and park shapes from the map are drawn (not just grass)', +(await o3.$eval('.v3d', (e) => e.dataset.terrain)) >= 10, await o3.$eval('.v3d', (e) => e.dataset.terrain));
     check('OpenStreetMap credit is shown in 3D', /OpenStreetMap/.test(await o3.$eval('.v3d-osm', (e) => e.textContent)));
     check('radar lists the other wall that has a place', (await o3.$eval('.v3d', (e) => e.dataset.radar)) === '1');
     { const r = await o3.$eval('.v3d-radar', (e) => { const b = e.getBoundingClientRect(); return { x: b.x, y: b.y }; });

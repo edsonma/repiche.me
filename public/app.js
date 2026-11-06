@@ -80,7 +80,14 @@ createApp({
     const showMap = ref(false);
     const mapEl = ref(null);
     const mapWalls = ref([]);
-    let leafletMap = null;
+    let leafletMap = null, streetLayer = null, satLayer = null;
+    const mapKind = ref(store.get('repiche.mapkind') === 'sat' ? 'sat' : 'map');
+    function setMapKind(k) {
+      mapKind.value = k; store.set('repiche.mapkind', k);
+      if (!leafletMap || !streetLayer) return;
+      leafletMap.removeLayer(k === 'sat' ? streetLayer : satLayer);
+      (k === 'sat' ? satLayer : streetLayer).addTo(leafletMap);
+    }
     const loadScript = (src) => new Promise((ok, no) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = no; document.head.appendChild(el); });
     async function openMap() {
       showMap.value = true; mapWalls.value = [];
@@ -95,7 +102,9 @@ createApp({
         const L = window.L;
         const here = wallGeo.value;
         leafletMap = L.map(mapEl.value, { worldCopyJump: true }).setView(here ? [here.lat, here.lon] : [-15.8, -47.9], here ? 12 : 4);
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(leafletMap);
+        streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
+        satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 18, attribution: 'Tiles © Esri — Esri, Maxar, Earthstar Geographics, GIS User Community' });
+        setMapKind(mapKind.value);
         const pts = [];
         for (const w of mapWalls.value) {
           const icon = L.divIcon({ className: 'wallpin', html: '<span></span>', iconSize: [22, 22], iconAnchor: [11, 22] });
@@ -114,7 +123,7 @@ createApp({
         else if (!here && pts.length === 1) leafletMap.setView(pts[0], 10);
       } catch (e) { error.value = 'Mapa indisponível.'; showMap.value = false; }
     }
-    function closeMap() { showMap.value = false; if (leafletMap) { leafletMap.remove(); leafletMap = null; } }
+    function closeMap() { showMap.value = false; if (leafletMap) { leafletMap.remove(); leafletMap = null; streetLayer = satLayer = null; } }
     const existsName = ref('');
     const creating = ref(false);
     const palette = ['#8b3a2b', '#7d7d7d', '#7a5230', '#10173a', '#f1ebd8', '#2c2c30', '#2b6cb0', '#2e7d4f', '#b8860b', '#6b2f7a', '#c2185b', '#e6e6e6'];
@@ -127,7 +136,11 @@ createApp({
       try {
         const mod = await import('/viewer3d.js');
         let cityData = null;
-        if (wallScene.value || wallGeo.value) cityData = await api(`/api/walls/${encodeURIComponent(slug.value)}/scene`).catch(() => null);
+        if (wallScene.value || wallGeo.value) {
+          // not ready yet (or no data)? don't wait: the generic street is drawn instead
+          const sc = await api(`/api/walls/${encodeURIComponent(slug.value)}/scene`).catch(() => null);
+          cityData = sc && Array.isArray(sc.b) ? sc : null;
+        }
         // radar: the other walls that have a place, seen from this wall's place
         let radar = null;
         if (wallGeo.value) {
@@ -278,6 +291,8 @@ createApp({
         total.value = w.total;
         if (w.serverNow) skew = w.serverNow - Date.now();
         wallSetup.value = w.setup !== false; // someone else may have created this wall meanwhile
+        if (w.photo && !wallPhoto.value) wallPhoto.value = w.photo; // the photo is fetched in the background after creation
+        if (w.scene && !wallScene.value) wallScene.value = w.scene;
         const bgBusy = showSetup.value;
         if (!bgBusy && !sameBg(background.value, w.background)) background.value = w.background;
       } catch { /* ignore transient errors */ }
@@ -516,7 +531,7 @@ createApp({
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
       visiblePosts, selectedId, toggleSelect, support, isSupported, timeLeft,
-      classic, toggleClassic, setupGeo, setupPlace, setupPhoto, setupScene, wallPhoto, photoUrl, photoCredit, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapEl, mapWalls, openMap, closeMap,
+      classic, toggleClassic, setupGeo, setupPlace, setupPhoto, setupScene, wallPhoto, photoUrl, photoCredit, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapKind, setMapKind, mapEl, mapWalls, openMap, closeMap,
       opening3d, open3D, palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,

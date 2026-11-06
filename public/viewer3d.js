@@ -354,7 +354,8 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
   scene.add(new THREE.HemisphereLight(0xbcd8ff, 0x8a7a55, 1.7));
 
   // ---- ground: blocky grass + a dirt walkway in front of the wall ----
-  const grassTex = track(pixelTexture([92, 150, 58], 38, 16, 3)); grassTex.repeat.set(240, 240);
+  // with real map data the ground is dry/urban (parks, sand and water are drawn from the map); the generic town keeps its lawn
+  const grassTex = track(cityData ? pixelTexture([150, 147, 134], 22, 16, 5) : pixelTexture([92, 150, 58], 38, 16, 3)); grassTex.repeat.set(240, 240);
   const ground = new THREE.Mesh(track(new THREE.PlaneGeometry(480, 480)), track(new THREE.MeshLambertMaterial({ map: grassTex })));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
   const dirtTex = track(pixelTexture([134, 96, 62], 30, 16, 9)); dirtTex.repeat.set(Wm + 6, 3);
@@ -452,6 +453,47 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
       wt.wrapS = wt.wrapT = THREE.RepeatWrapping; wt.repeat.set(1 / 3, 1 / 3); wt.colorSpace = THREE.SRGBColorSpace; wt.anisotropy = 4;
       const bm = new THREE.Mesh(bg, track(new THREE.MeshLambertMaterial({ vertexColors: true, map: wt })));
       bm.receiveShadow = true; scene.add(bm);
+    }
+    // terrain from the map: water, sand, parks and the coastline (the sea is on the right-hand side of a coastline)
+    if (cityData && Array.isArray(city.a)) {
+      const tp = [], tc = [];
+      const tri = (ax, az, bx, bz, cx, cz, y, c) => { tp.push(ax, y, az, bx, y, bz, cx, y, cz); for (let k = 0; k < 3; k++) tc.push(c.r, c.g, c.b); };
+      const WATER = new THREE.Color(0x3f86bf), SAND = new THREE.Color(0xe6d6a2), GREEN = new THREE.Color(0x73a957);
+      const Y = { g: 0.006, s: 0.01, w: 0.014 }, COL = { g: GREEN, s: SAND, w: WATER };
+      for (let [kind, pts] of city.a.slice(0, 150)) {
+        if (!['c', 'w', 's', 'g'].includes(kind) || !Array.isArray(pts) || pts.length < 4 || pts.length > 80 || !pts.every(num)) continue;
+        pts = place2(pts);
+        if (kind === 'c') {
+          for (let i = 0; i + 3 < pts.length; i += 2) {
+            const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
+            if (inZone((ax + bx) / 2, (az + bz) / 2)) continue;
+            const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1, nx = -dz / len, nz = dx / len; // right-hand normal
+            const D = 500, B = 18;                                  // sea 500 m deep; a beach strip of 18 m on the land side
+            tri(ax, az, bx, bz, bx + nx * D, bz + nz * D, Y.w, WATER); tri(ax, az, bx + nx * D, bz + nz * D, ax + nx * D, az + nz * D, Y.w, WATER);
+            tri(ax, az, bx, bz, bx - nx * B, bz - nz * B, Y.s, SAND); tri(ax, az, bx - nx * B, bz - nz * B, ax - nx * B, az - nz * B, Y.s, SAND);
+          }
+          continue;
+        }
+        let cx = 0, cz = 0; for (let i = 0; i < pts.length; i += 2) { cx += pts[i]; cz += pts[i + 1]; }
+        if (inZone(cx / (pts.length / 2), cz / (pts.length / 2))) continue;
+        try {
+          const sh = new THREE.Shape();
+          for (let i = 0; i < pts.length; i += 2) (i ? sh.lineTo : sh.moveTo).call(sh, pts[i], -pts[i + 1]);
+          const sg = new THREE.ShapeGeometry(sh); sg.rotateX(-Math.PI / 2);
+          const ng = sg.index ? sg.toNonIndexed() : sg, p = ng.attributes.position.array;
+          for (let i = 0; i < p.length; i += 3) tri(p[i], p[i + 2], p[i + 3], p[i + 5], p[i + 6], p[i + 8], Y[kind], COL[kind]), i += 6;
+          sg.dispose(); if (ng !== sg) ng.dispose();
+        } catch { /* skip a broken polygon */ }
+      }
+      if (tp.length) {
+        const tg = track(new THREE.BufferGeometry());
+        tg.setAttribute('position', new THREE.Float32BufferAttribute(tp, 3));
+        tg.setAttribute('color', new THREE.Float32BufferAttribute(tc, 3));
+        tg.computeVertexNormals();
+        const tm = new THREE.Mesh(tg, track(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })));
+        tm.receiveShadow = true; scene.add(tm);
+        root.dataset.terrain = String(tp.length / 9); // triangles of water / sand / parks (used by tests)
+      }
     }
     // roads like a street view: sidewalk edge, asphalt, and dashed centre line on the wider ones
     const rp = [], rc = [];

@@ -47,6 +47,10 @@ The JSON file store suits a single instance only (keep replicas at 1). Move to P
 
 - **Free walking and radar.** In the 3D view you can walk all over the street map (Shift runs); the wall, the buildings, the trees and the lost visitor are solid, and invisible limits keep you inside the drawn area. Walls that have a place show a radar at the top left: other walls with a place around this one (log scale, 1000 km at the edge, up = where you are looking, N marks north). Tap a dot to see the wall, its place and distance, and "Ir para este muro" jumps there and opens its 3D view. In the map, every pin popup also has "🧊 Ir ao 3D". (With the mouse captured, press Esc to release it before clicking the radar.)
 
+- **Instant creation.** Creating a wall never waits for outside services: the OSM scene and the Mapillary photo are fetched in the background after the wall exists. Opening the 3D view waits at most 3 s for the scene and otherwise draws the generic street (the real one appears next time); the photo shows up on the wall by itself a few seconds later.
+- **Terrain from the map.** With OSM data the 3D ground is no longer all grass: the sea (the right-hand side of a coastline) and lakes/rivers are blue, beaches and sand are sand-coloured, parks and grass are green, and the rest is dry urban ground. The generic town keeps its lawn.
+- **Satellite map.** The map has a Mapa / Satélite switch (remembered). Satellite tiles are Esri World Imagery, credited on the map; check Esri's terms before heavy or commercial use. The 3D ground does not use satellite imagery (licence and weight).
+
 ## Not implemented (yet)
 
 Accounts, chat, the 2013 redesign, moderation tools, a real database.

@@ -214,14 +214,18 @@ const TOKEN = 'correct-horse-battery-staple';
   await sleep(2200);
   let mr = await setupM('rua', { geo: { lat: -23.55, lon: -46.63, place: 'Rua' }, photo: true });
   let mj = await mr.json();
-  check('wall created with a photo; credit is sanitized', mr.status === 201 && mj.photo && mj.photo.id === '123456' && mj.photo.creator === 'mariascript' && mj.photo.year === 2021, JSON.stringify(mj));
+  const until = async (fn, ms = 4000) => { const t0 = Date.now(); for (;;) { const r = await fn(); if (r || Date.now() - t0 > ms) return r; await sleep(100); } };
+  check('creation answers right away and says the photo is coming', mr.status === 201 && mj.photoPending === true && !mj.photo, JSON.stringify(mj));
+  mj = { photo: (await until(async () => (await (await fetch(`${ms.base}/api/walls/rua`)).json()).photo)) };
+  check('the photo shows up in the background; credit is sanitized', mj.photo && mj.photo.id === '123456' && mj.photo.creator === 'mariascript' && mj.photo.year === 2021, JSON.stringify(mj));
   const ph = await fetch(`${ms.base}/api/walls/rua/photo`);
   check('photo is served from our own server as image/jpeg', ph.status === 200 && ph.headers.get('content-type') === 'image/jpeg' && (await ph.arrayBuffer()).byteLength === jpeg.length);
   check('GET wall exposes the credit, visitors never talk to Mapillary', (await (await fetch(`${ms.base}/api/walls/rua`)).json()).photo.creator === 'mariascript' && hits.length === 2, hits.join(' '));
   check('walls without a photo return 404 for it', (await fetch(`${ms.base}/api/walls/semgeo/photo`)).status === 404 && (await fetch(`${ms.base}/api/walls/__proto__/photo`)).status === 404);
   await sleep(2200);
   mr = await setupM('vazio', { geo: { lat: 10.0, lon: 10.0 }, photo: true }); mj = await mr.json();
-  check('no photos nearby: wall is still created, with a note', mr.status === 201 && !mj.photo && /fotos abertas/.test(mj.photoNote), JSON.stringify(mj));
+  await sleep(800);
+  check('no photos nearby: wall is still created, simply without a photo', mr.status === 201 && !(await (await fetch(`${ms.base}/api/walls/vazio`)).json()).photo && (await fetch(`${ms.base}/api/walls/vazio/photo`)).status === 404);
   await ms.stop(); fake.close();
   const ns = await startServer();
   check('without a token the option is off and requests for it are refused', (await (await fetch(ns.base + '/api/meta')).json()).photos === false && (await fetch(`${ns.base}/api/walls/xx/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, geo: { lat: 1, lon: 1 }, photo: true }) })).status === 400);
@@ -244,7 +248,13 @@ const TOKEN = 'correct-horse-battery-staple';
         { type: 'way', tags: { building: 'yes' }, geometry: g([[0, 5]]) },
         { type: 'node', id: 1 },
       ];
-      rs.setHeader('Content-Type', 'application/json'); rs.end(JSON.stringify(rq.url === '/empty' ? { elements: [] } : { elements: els }));
+      els.push(
+        { type: 'way', tags: { natural: 'coastline' }, geometry: g([[0.0004, -0.0020], [0.0004, 0.0], [0.0004, 0.0020]]) },
+        { type: 'way', tags: { natural: 'water' }, geometry: g([[0.0020, 0.0], [0.0020, 0.0006], [0.0014, 0.0006], [0.0014, 0.0]]) },
+        { type: 'way', tags: { natural: 'beach' }, geometry: g([[0.0005, 0.0], [0.0005, 0.0006], [0.0010, 0.0006], [0.0010, 0.0]]) },
+        { type: 'way', tags: { leisure: 'park' }, geometry: [null, ...g([[0.0, 0.0010], [0.0, 0.0016], [0.0006, 0.0016]])] },
+      );
+      setTimeout(() => { rs.setHeader('Content-Type', 'application/json'); rs.end(JSON.stringify(rq.url === '/empty' ? { elements: [] } : { elements: els })); }, hits2.length === 1 ? 1500 : 0);
     });
   });
   await new Promise((ok) => fk.listen(0, ok));
@@ -252,11 +262,15 @@ const TOKEN = 'correct-horse-battery-staple';
   const setupO = (slug, body) => fetch(`${os.base}/api/walls/${slug}/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, ...body }) });
   check('a scene needs a place', (await setupO('semlugar2', { scene: true })).status === 400);
   await sleep(2200);
+  const t0 = Date.now();
   let or = await setupO('bairro', { geo: { lat: -23.55, lon: -46.63, place: 'Bairro' }, scene: true });
   let oj = await or.json();
-  check('wall created with an OSM scene (1 building + 1 road kept, junk dropped)', or.status === 201 && oj.scene && oj.scene.buildings === 1 && oj.scene.roads === 1, JSON.stringify(oj));
-  check('Overpass is asked once, with a bbox around the place', hits2.length === 1 && /way\["building"\]/.test(hits2[0]) && /way\["highway"\]/.test(hits2[0]));
+  check('creating a wall is instant even though Overpass takes 1.5 s', or.status === 201 && oj.scenePending === true && Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
+  const gotScene = await until(async () => (await (await fetch(`${os.base}/api/walls/bairro`)).json()).scene, 6000);
+  check('the scene is fetched in the background (1 building + 1 road, junk dropped; coast, sea, sand and park kept)', gotScene && gotScene.buildings === 1 && gotScene.roads === 1 && gotScene.areas === 4, JSON.stringify(gotScene));
+  check('Overpass is asked once, with a bbox, for buildings, roads and terrain', hits2.length === 1 && /way\["building"\]/.test(hits2[0]) && /way\["highway"\]/.test(hits2[0]) && /coastline/.test(hits2[0]) && /geom\(/.test(hits2[0]));
   const sc = await (await fetch(`${os.base}/api/walls/bairro/scene`)).json();
+  check('terrain areas are typed (c coast, w water, s sand, g green)', sc.a.map((x) => x[0]).sort().join('') === 'cgsw', JSON.stringify(sc.a).slice(0, 200));
   check('scene JSON is compact metres around the place (north = -z)', sc.b.length === 1 && sc.b[0][0] === 15 && sc.b[0][1].length === 8 && sc.b[0][1].every(Number.isFinite) && sc.b[0][1][1] < 0, JSON.stringify(sc).slice(0, 160));
   check('GET wall flags the scene; unknown walls have none', !!(await (await fetch(`${os.base}/api/walls/bairro`)).json()).scene && (await fetch(`${os.base}/api/walls/nada/scene`)).status === 404 && (await fetch(`${os.base}/api/walls/__proto__/scene`)).status === 404);
   await sleep(2200);

@@ -22,7 +22,8 @@ const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
 const SCENE_DIR = path.join(DATA_DIR, 'scenes');
 const OVERPASS_API = process.env.OVERPASS_API || 'https://overpass-api.de/api/interpreter';
 const SCENE_HALF_M = 220;      // metres around the (rounded) place
-const MAX_BUILDINGS = 500, MAX_ROADS = 200, MAX_PTS = 40;
+const SCENE_WAIT_MS = Number(process.env.SCENE_WAIT_MS) || 3000;
+const MAX_AREAS = 150, MAX_BUILDINGS = 500, MAX_ROADS = 200, MAX_PTS = 40;
 
 // ---- Limits / whitelists -------------------------------------------------
 const MAX_TEXT = 140;
@@ -230,7 +231,7 @@ const CSP = [
   "script-src 'self' 'unsafe-eval'",
   "style-src 'self' https://fonts.googleapis.com",
   "font-src https://fonts.gstatic.com",
-  "img-src 'self' data: blob: https://tile.openstreetmap.org",
+  "img-src 'self' data: blob: https://tile.openstreetmap.org https://server.arcgisonline.com",
   "connect-src 'self'",
   "object-src 'none'",
   "base-uri 'self'",
@@ -325,7 +326,8 @@ app.get('/api/walls/:slug/photo', (req, res) => {
 async function fetchScene(slug, geo) {
   const dLat = SCENE_HALF_M / 110540, dLon = SCENE_HALF_M / (111320 * Math.cos((geo.lat * Math.PI) / 180));
   const bb = [geo.lat - dLat, geo.lon - dLon, geo.lat + dLat, geo.lon + dLon].map((n) => n.toFixed(6)).join(',');
-  const query = `[out:json][timeout:12];(way["building"](${bb});way["highway"](${bb}););out tags geom 900;`;
+  // buildings, roads, and the ground: water, sand (beaches), parks and the coastline itself
+  const query = `[out:json][timeout:12];(way["building"](${bb});way["highway"](${bb});way["natural"~"^(water|beach|sand|coastline)$"](${bb});way["leisure"~"^(park|garden|pitch|playground)$"](${bb});way["landuse"~"^(grass|forest|meadow|recreation_ground|village_green)$"](${bb}););out tags geom(${bb}) 1400;`; // geom(bbox): geometry clipped to the box, points outside come back null
   const r = await fetch(OVERPASS_API, {
     method: 'POST', signal: AbortSignal.timeout(15000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'repiche.me (graffiti wall; github.com/edsonma/repiche.me)' },
@@ -347,7 +349,7 @@ async function fetchScene(slug, geo) {
     return out;
   };
   const ROAD_W = { motorway: 11, trunk: 10, primary: 9, secondary: 8, tertiary: 7, residential: 6, unclassified: 6, living_street: 5, service: 4, pedestrian: 4, footway: 1.6, path: 1.6, cycleway: 2, steps: 1.6, track: 3 };
-  const b = [], rd = [];
+  const b = [], rd = [], ar = [];
   for (const e of els) {
     if (e.type !== 'way' || !Array.isArray(e.geometry) || !e.geometry.length) continue;
     const t = e.tags || {};
@@ -357,17 +359,37 @@ async function fetchScene(slug, geo) {
       const lv = parseFloat(t['building:levels']), hh = parseFloat(t.height);
       const h = Number.isFinite(hh) ? hh : Number.isFinite(lv) ? lv * 3 : 6 + (Math.abs(pts[0] * 7 + pts[1] * 13) % 6);
       b.push([Math.round(Math.min(120, Math.max(2.5, h)) * 10) / 10, pts]);
+    } else if ((t.natural || t.leisure || t.landuse) && ar.length < MAX_AREAS) {
+      // 'c' = coastline (open line, the sea is on its right-hand side); w / s / g = closed water / sand / green areas
+      const kind = t.natural === 'coastline' ? 'c' : t.natural === 'water' ? 'w' : (t.natural === 'beach' || t.natural === 'sand') ? 's' : (t.leisure || t.landuse) ? 'g' : null;
+      if (!kind) continue;
+      // keep what is inside the box; a coastline split by the box edge becomes separate pieces
+      const runs = []; let cur = [];
+      for (const p of e.geometry) {
+        if (p && typeof p.lat === 'number' && typeof p.lon === 'number') cur.push(p); else { if (cur.length) runs.push(cur); cur = []; }
+      }
+      if (cur.length) runs.push(cur);
+      for (const run of (kind === 'c' ? runs : [runs.flat()])) {
+        const pts = toXZ(run);
+        if (pts && pts.length >= (kind === 'c' ? 4 : 6) && ar.length < MAX_AREAS) ar.push([kind, pts]);
+      }
     } else if (t.highway && ROAD_W[t.highway] && rd.length < MAX_ROADS) {
       const pts = toXZ(e.geometry);
       if (pts && pts.length >= 4) rd.push([ROAD_W[t.highway], pts]);
     }
   }
-  if (!b.length && !rd.length) return null;
-  const data = JSON.stringify({ b, r: rd });
+  if (!b.length && !rd.length && !ar.length) return null;
+  const data = JSON.stringify({ b, r: rd, a: ar });
   if (data.length > 600 * 1024) throw new Error('scene too big');
   fs.mkdirSync(SCENE_DIR, { recursive: true });
   fs.writeFileSync(path.join(SCENE_DIR, slug + '.json'), data);
-  return { buildings: b.length, roads: rd.length };
+  return { buildings: b.length, roads: rd.length, areas: ar.length };
+}
+const photoJobs = new Set();
+function ensurePhoto(slug, w) {
+  if (photoJobs.has(slug) || w.photo || !w.geo || !MAPILLARY_TOKEN) return;
+  photoJobs.add(slug);
+  fetchPlacePhoto(slug, w.geo).then((p) => { if (p) { w.photo = p; save(); } }).catch((e) => console.error('photo:', e.message)).finally(() => photoJobs.delete(slug));
 }
 const sceneJobs = new Map(), sceneFailed = new Map();
 async function ensureScene(slug, w) {
@@ -385,7 +407,11 @@ app.get('/api/walls/:slug/scene', async (req, res) => {
   const slug = req.params.slug.toLowerCase();
   const w = validSlug(slug) && db.walls[slug];
   if (!w) return res.status(404).end();
-  if (!w.scene && w.geo) await ensureScene(slug, w); // walls made before scenes existed get theirs on first use
+  if (!w.scene && w.geo) { // walls made before scenes existed get theirs on first use; never keep the visitor waiting long
+    const job = ensureScene(slug, w);
+    await Promise.race([job, new Promise((ok) => setTimeout(ok, SCENE_WAIT_MS))]);
+    if (!w.scene) return res.status(202).json({ pending: sceneJobs.has(slug) });
+  }
   if (!w.scene) return res.status(404).end();
   res.set('Cache-Control', 'public, max-age=86400').type('application/json').sendFile(path.join(SCENE_DIR, slug + '.json'), (e) => { if (e && !res.headersSent) res.status(404).end(); });
 });
@@ -463,30 +489,20 @@ app.post('/api/walls/:slug/setup', setupLimit, async (req, res) => {
   if (existing && existing.setup) return res.status(409).json({ error: 'Esse muro já existe.' });
   const wall = getWall(slug, true);
   if (!wall) return res.status(503).json({ error: 'Muitos muros criados. Tente mais tarde.' });
-  // optional photo of the place as the wall surface (needs a place and a Mapillary token)
-  let photoNote;
-  let photo = null;
-  if ((req.body || {}).photo === true) {
-    if (!geo || !MAPILLARY_TOKEN) return res.status(400).json({ error: 'Foto do lugar indisponível.' });
-    try { photo = await fetchPlacePhoto(slug, geo); if (!photo) photoNote = 'Não achei fotos abertas perto desse lugar. O muro foi criado com a textura escolhida.'; }
-    catch (e) { console.error('photo:', e.message); photoNote = 'Não consegui buscar a foto agora. O muro foi criado com a textura escolhida.'; }
-  }
-  // optional street scene from OpenStreetMap (needs a place)
-  let scene = null, sceneNote;
-  if ((req.body || {}).scene === true) {
-    if (!geo) return res.status(400).json({ error: 'O cenário precisa de um lugar.' });
-    try { scene = await fetchScene(slug, geo); if (!scene) sceneNote = 'O OpenStreetMap não tem prédios nem ruas mapeados ali. O muro foi criado sem cenário.'; }
-    catch (e) { console.error('scene:', e.message); sceneNote = 'Não consegui buscar o cenário agora. O muro foi criado sem ele.'; }
-  }
+  // optional extras (a Mapillary photo, the OSM street scene) are fetched AFTER answering: creating a wall must
+  // be instant, and these upstream calls can take many seconds.
+  const wantPhoto = (req.body || {}).photo === true, wantScene = (req.body || {}).scene === true;
+  if (wantPhoto && (!geo || !MAPILLARY_TOKEN)) return res.status(400).json({ error: 'Foto do lugar indisponível.' });
+  if (wantScene && !geo) return res.status(400).json({ error: 'O cenário precisa de um lugar.' });
   const again = db.walls[slug]; // someone may have created it while we were fetching
   if (again && again.setup) return res.status(409).json({ error: 'Esse muro já existe.' });
   wall.background = bg;
   if (geo) wall.geo = geo;
-  if (photo) wall.photo = photo;
-  if (scene) wall.scene = scene;
   wall.setup = true;
   save();
-  res.status(201).json({ slug, background: wall.background, ...(wall.geo ? { geo: wall.geo } : {}), ...(wall.photo ? { photo: wall.photo } : {}), ...(wall.scene ? { scene: wall.scene } : {}), ...((photoNote || sceneNote) ? { photoNote: [photoNote, sceneNote].filter(Boolean).join(' ') } : {}) });
+  if (wantPhoto) ensurePhoto(slug, wall);
+  if (wantScene) ensureScene(slug, wall);
+  res.status(201).json({ slug, background: wall.background, ...(wall.geo ? { geo: wall.geo } : {}), ...(wantPhoto ? { photoPending: true } : {}), ...(wantScene ? { scenePending: true } : {}) });
 });
 
 app.post('/api/walls/:slug/posts', rateLimit, (req, res) => {
