@@ -103,8 +103,10 @@ createApp({
           const box = document.createElement('div');
           const a = document.createElement('a'); a.href = '/' + w.slug; a.textContent = '/' + w.slug;
           a.addEventListener('click', (e) => { e.preventDefault(); closeMap(); go(w.slug); });
+          const b3 = document.createElement('button'); b3.type = 'button'; b3.className = 'pin3d'; b3.textContent = '🧊 Ir ao 3D';
+          b3.addEventListener('click', () => { closeMap(); go(w.slug, true); });
           const info = document.createElement('small'); info.textContent = ` ${w.place ? w.place + ' · ' : ''}${w.count} pichações`;
-          box.append(a, info);
+          box.append(a, info, document.createElement('br'), b3);
           m.bindPopup(box);
           pts.push([w.lat, w.lon]);
         }
@@ -126,8 +128,14 @@ createApp({
         const mod = await import('/viewer3d.js');
         let cityData = null;
         if (wallScene.value || wallGeo.value) cityData = await api(`/api/walls/${encodeURIComponent(slug.value)}/scene`).catch(() => null);
+        // radar: the other walls that have a place, seen from this wall's place
+        let radar = null;
+        if (wallGeo.value) {
+          const others = await api('/api/map').catch(() => []);
+          radar = { center: { ...wallGeo.value }, walls: others.filter((w) => w.slug !== slug.value), go: (s) => go(s, true) };
+        }
         viewer3d = await mod.open3D({
-          cityData,
+          cityData, radar,
           posts: visiblePosts.value.map((p) => ({ ...p })),
           opacity: (p) => fade(p),
           background: { ...background.value },
@@ -452,12 +460,13 @@ createApp({
       walls.value = await api('/api/walls').catch(() => []);
     }
 
-    function go(target) {
+    function go(target, with3d = false) {
       showNav.value = false;
       cancelPlacing();
+      if (viewer3d) viewer3d.close(); // leaving a wall from inside its 3D view (radar)
       history.pushState({}, '', '/' + (target === 'home' ? '' : encodeURIComponent(target)));
       slug.value = slugFromPath();
-      loadWall();
+      loadWall().then(() => { if (with3d) open3D(); });
     }
 
     function goCustom() {

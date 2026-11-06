@@ -164,8 +164,14 @@ const J = { 'Content-Type': 'application/json' };
   await g.click('.mapmodal .wallpin');
   await g.waitForSelector('.leaflet-popup a');
   check('pin popup links to the wall and shows the place', /Copacabana/.test(await g.$eval('.leaflet-popup', (e) => e.textContent)) && (await g.$eval('.leaflet-popup a', (a) => a.getAttribute('href'))) === '/praia');
-  await g.click('.mapmodal .close');
-  check('map closes', !(await g.$('.mapmodal')));
+  check('pin popup offers "Ir ao 3D"', !!(await g.$('.leaflet-popup .pin3d')));
+  const glG = await g.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2'); } catch { return false; } });
+  if (glG) {
+    await g.click('.leaflet-popup .pin3d');
+    await g.waitForSelector('.v3d canvas', { timeout: 30000 });
+    check('"Ir ao 3D" closes the map and opens the 3D view of that wall', !(await g.$('.mapmodal')) && !!(await g.$('.v3d')));
+    await g.click('.v3d-close'); await sleep(300);
+  } else { await g.click('.mapmodal .close'); }
   await g.close();
 
   // ---------- modo clássico ----------
@@ -201,6 +207,8 @@ const J = { 'Content-Type': 'application/json' };
   await fetch(so.base + '/api/walls/centro/setup', { method: 'POST', headers: J, body: JSON.stringify({ background: { color: '#2c2c30', texture: 'concrete' }, geo: { lat: -23.55, lon: -46.63, place: 'Centro' }, scene: true }) });
   const o3 = await b.newPage(); watch(o3);
   await o3.setViewport({ width: 1000, height: 700 });
+  await sleep(2300);
+  await fetch(so.base + '/api/walls/norte/setup', { method: 'POST', headers: J, body: JSON.stringify({ background: { color: '#2c2c30', texture: 'concrete' }, geo: { lat: -23.50, lon: -46.63, place: 'Norte' } }) });
   await o3.goto(so.base + '/centro', { waitUntil: 'networkidle0' });
   const gl2 = await o3.evaluate(() => { try { return !!document.createElement('canvas').getContext('webgl2'); } catch { return false; } });
   if (gl2) {
@@ -216,6 +224,16 @@ const J = { 'Content-Type': 'application/json' };
     await o3.click('.v3d-turn'); await sleep(300);
     check('...and back to the wall', Math.abs(+(await o3.$eval('.v3d', (e) => e.dataset.view)).split(',')[2]) < 0.05);
     check('OpenStreetMap credit is shown in 3D', /OpenStreetMap/.test(await o3.$eval('.v3d-osm', (e) => e.textContent)));
+    check('radar lists the other wall that has a place', (await o3.$eval('.v3d', (e) => e.dataset.radar)) === '1');
+    { const r = await o3.$eval('.v3d-radar', (e) => { const b = e.getBoundingClientRect(); return { x: b.x, y: b.y }; });
+      await o3.mouse.click(r.x + 60, r.y + 75); await sleep(400); // the other wall is ~5.5 km north: straight behind you here
+      const info = await o3.$eval('.v3d-radarinfo', (e) => ({ hidden: e.hidden, t: e.textContent }));
+      check('tapping a radar dot shows the wall, its place and distance, with a button', !info.hidden && /\/norte · Norte/.test(info.t) && /5\.[0-9] km/.test(info.t) && /Ir para este muro/.test(info.t), info.t);
+      await o3.click('.v3d-radarinfo button');
+      await o3.waitForFunction(() => location.pathname === '/norte', { timeout: 10000 });
+      await o3.waitForSelector('.v3d canvas', { timeout: 30000 });
+      check('"Ir para este muro" goes to that wall and opens its 3D view', (await o3.title()).startsWith('/norte') && !!(await o3.$('.v3d')));
+      await o3.click('.v3d-close'); await sleep(300); }
     check('3D with a scene: no CSP violations or page errors', bad.length === 0, bad.join(' | '));
   } else console.log('SKIP  OSM scene 3D: no WebGL');
   await o3.close(); await so.stop(); fk.close(); }
@@ -262,6 +280,15 @@ const J = { 'Content-Type': 'application/json' };
   check('closing returns to the 3D view; the talk button is back', (await p.$eval('.v3d-cardwrap', (e) => e.hidden)) && !(await p.$eval('.v3d-talk', (e) => e.hidden)));
   await talkBtn.tap(); await sleep(200); await p.keyboard.press('Escape'); await sleep(200);
   check('Esc closes the conversation, not the 3D view', (await p.$eval('.v3d-bubble', (e) => e.hidden)) && !!(await p.$('.v3d')));
+  // free walking: all over the street, but the wall itself is solid
+  await send('touchStart', [{ x: jc.x, y: jc.y, id: 8 }]); await send('touchMove', [{ x: jc.x, y: jc.y - 45, id: 8 }]);
+  await sleep(9000); await send('touchEnd', []); await sleep(300);
+  const vw = await view();
+  check('walking into the wall stops at the wall (does not pass through)', vw[1] > 0.4 && vw[1] < 2, JSON.stringify(vw));
+  // now walk away from the wall, past the old 13 m limit
+  await send('touchStart', [{ x: jc.x, y: jc.y, id: 9 }]); await send('touchMove', [{ x: jc.x, y: jc.y + 45, id: 9 }]);
+  await sleep(9000); await send('touchEnd', []); await sleep(300);
+  check('you can walk away over the street, beyond the old 13 m limit', (await view())[1] > 14, JSON.stringify(await view()));
   await send('touchStart', [{ x: jc.x, y: jc.y, id: 8 }]);
   await send('touchMove', [{ x: jc.x + 45, y: jc.y, id: 8 }]);
   await sleep(900); await send('touchEnd', []); await sleep(400);

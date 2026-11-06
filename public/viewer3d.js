@@ -13,7 +13,8 @@ const MAX_H_PX = 1400;      // tallest part of the board shown in 3D (7 m)
 const MIN_H_PX = 700;
 const THICK = 0.4;          // wall thickness (m)
 const EYE = 1.6;            // eye height (m)
-const Z_MIN = THICK / 2 + 1.1, Z_MAX = 13;  // how near / far you can stand (always in front of the wall)
+const WALK_X = 210, WALK_Z0 = -190, WALK_Z1 = 230; // you can walk all over the map; only these outer limits stop you
+const BODY = 0.3;            // your radius (m) for bumping into the wall, buildings and trees
 const PITCH_MAX = 1.5;                       // free look like Minecraft; only walking is limited
 const SEG_PX = 3360;                         // the wall is built from segments so each texture stays sharp
 const SPEED = 3;            // m/s
@@ -258,7 +259,7 @@ export function createMusic() {
   };
 }
 
-export async function open3D({ posts, background, wallW, wallH, fonts = [], place = '', photoUrl = '', cityData = null, opacity = () => 1, onClose = () => {} }) {
+export async function open3D({ posts, background, wallW, wallH, fonts = [], place = '', photoUrl = '', cityData = null, radar = null, opacity = () => 1, onClose = () => {} }) {
   const isTouch = matchMedia('(pointer: coarse)').matches;
   const boardH = Math.min(MAX_H_PX, Math.max(MIN_H_PX, Math.ceil(wallH)));
   const Wm = wallW / PX_PER_M, Hm = boardH / PX_PER_M;
@@ -274,10 +275,11 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     <div class="v3d-bubble" hidden></div>
     <div class="v3d-cardwrap" hidden></div>
     <button class="v3d-turn" title="Virar entre o muro e a rua">🏙 Ver a rua</button>
+    ${radar ? '<div class="v3d-radarwrap"><canvas class="v3d-radar" width="240" height="240" aria-label="Radar de outros muros"></canvas><div class="v3d-radarinfo" hidden></div></div>' : ''}
     <button class="v3d-music" aria-label="Música" title="Música ligada/desligada">🔊</button>
     ${place ? '<div class="v3d-place"></div>' : ''}
     ${cityData ? '<div class="v3d-osm">Mapa © colaboradores do OpenStreetMap (ODbL)</div>' : ''}
-    <div class="v3d-hint">${isTouch ? 'Círculo à esquerda: andar · arraste à direita: olhar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
+    <div class="v3d-hint">${isTouch ? 'Círculo à esquerda: andar · arraste à direita: olhar' : '<b>Clique</b> para capturar o mouse · WASD anda · Espaço pula · Shift corre · Esc solta o mouse (Esc de novo sai)'}<br>Ande pela rua à vontade; o muro e os prédios são sólidos.${clipped ? '<br>Mostrando só o topo do muro (primeiros ' + MAX_H_PX + ' px).' : ''}</div>
     ${isTouch ? '<div class="v3d-joy" aria-label="Andar"><div class="knob"></div></div><button class="v3d-jump" aria-label="Pular">⤒</button>' : ''}`;
   document.body.appendChild(root);
   const placeEl = root.querySelector('.v3d-place');
@@ -394,12 +396,16 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
   // ---- the street around the place, rebuilt from OpenStreetMap data (flat roads + extruded buildings) ----
   // Two merged meshes only. Anything that would overlap the wall and its walkway is left out, so the
   // wall stands in a clearing of the real neighbourhood.
+  let cityFlip = 1; // 1: the map's north is straight ahead of the wall; -1: the map was turned around
+  const solids = []; // axis-aligned boxes you can't walk through: the wall and the buildings
+  solids.push({ x0: -Wm / 2 - 0.1, x1: Wm / 2 + 0.1, z0: -THICK / 2 - 0.1, z1: THICK / 2 + 0.1 });
   const city = cityData || genericCity();
   if (city && Array.isArray(city.b)) {
     const ZSHIFT = 16; // the map is moved so its centre is on the far edge of the walkway: the street lies in front of you, behind your back
     // The wall's side of the map is hidden behind the wall, so turn the map 180 degrees if its busier half is there
     const heavy = (a) => a.reduce((n, [, p]) => n + (Array.isArray(p) && p.length > 1 && p[1] > 0 ? 1 : -1), 0);
     const FLIP = heavy(city.b) < 0 ? -1 : 1;
+    cityFlip = FLIP;
     const place2 = (pts) => pts.map((n, i) => (i % 2 ? FLIP * n + ZSHIFT : FLIP * n));
     const zone = { x0: -Wm / 2 - 6, x1: Wm / 2 + 6, z0: -3, z1: 16 };
     const inZone = (x, z) => x > zone.x0 && x < zone.x1 && z > zone.z0 && z < zone.z1;
@@ -431,6 +437,9 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
         eg.rotateX(-Math.PI / 2);
         const c = new THREE.Color(pal[Math.abs(Math.floor(cx * 7 + cz * 3)) % pal.length]);
         pushGeo(eg, c); nB++;
+        let bx0 = 1e9, bx1 = -1e9, bz0 = 1e9, bz1 = -1e9;
+        for (let i = 0; i < pts.length; i += 2) { bx0 = Math.min(bx0, pts[i]); bx1 = Math.max(bx1, pts[i]); bz0 = Math.min(bz0, pts[i + 1]); bz1 = Math.max(bz1, pts[i + 1]); }
+        solids.push({ x0: bx0, x1: bx1, z0: bz0, z1: bz1 });
       } catch { /* a broken footprint: skip it */ }
     }
     if (pos.length) {
@@ -497,7 +506,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
   treeSpots.forEach((t, i) => {
     const put = (mesh, y) => { m4.compose(v3.set(t.x, y * t.s, t.z), q, s3.set(t.s, t.s, t.s)); mesh.setMatrixAt(i, m4); };
     put(trunks, 1.2); put(leaves, 3.2); put(tops, 4.4);
-    if (t.z > 0) blockers.push({ x: t.x, z: t.z, r: 1.1 * t.s });
+    blockers.push({ x: t.x, z: t.z, r: 1.1 * t.s });
   });
   [trunks, leaves, tops].forEach((m) => { m.castShadow = true; m.receiveShadow = false; m.frustumCulled = false; scene.add(m); });
 
@@ -541,6 +550,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
   })();
 
   // ---- player ----
+  let radarDraw = null;
   const st = { x: 0, z: 7.5, yaw: 0, pitch: 0.05, h: 0, vy: 0 };
   camera.position.set(st.x, EYE, st.z);
   const keys = new Set();
@@ -681,19 +691,79 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
 
   root.querySelector('.v3d-close').addEventListener('click', () => { if (document.pointerLockElement) document.exitPointerLock(); close(); });
 
-  // walk relative to where you look. You can look anywhere, but can't leave the front of the wall,
-  // go past its ends, or walk through trees / the lost guy.
+  // walk relative to where you look, all over the map (streets included). The wall, the buildings, the trees
+  // and the lost guy are solid; the outer limits keep you inside the drawn area.
   function move(strafe, fwd) {
     const sy = Math.sin(st.yaw), cy = Math.cos(st.yaw);
     st.x += strafe * cy + fwd * -sy;
     st.z += strafe * -sy + fwd * -cy;
-    st.x = Math.max(-Wm / 2 - 0.4, Math.min(Wm / 2 + 0.4, st.x));
-    st.z = Math.max(Z_MIN, Math.min(Z_MAX, st.z));
+    st.x = Math.max(-WALK_X, Math.min(WALK_X, st.x));
+    st.z = Math.max(WALK_Z0, Math.min(WALK_Z1, st.z));
+    for (const s of solids) { // push out of boxes along the shortest way
+      if (st.x > s.x0 - BODY && st.x < s.x1 + BODY && st.z > s.z0 - BODY && st.z < s.z1 + BODY) {
+        const l = st.x - (s.x0 - BODY), r = s.x1 + BODY - st.x, f = st.z - (s.z0 - BODY), bk = s.z1 + BODY - st.z, m = Math.min(l, r, f, bk);
+        if (m === l) st.x = s.x0 - BODY; else if (m === r) st.x = s.x1 + BODY; else if (m === f) st.z = s.z0 - BODY; else st.z = s.z1 + BODY;
+      }
+    }
     for (const b of blockers) {
       const dx = st.x - b.x, dz = st.z - b.z, d = Math.hypot(dx, dz), min = b.r + 0.3;
       if (d < min && d > 1e-4) { st.x = b.x + (dx / d) * min; st.z = b.z + (dz / d) * min; }
     }
     dirty = true;
+  }
+
+  // ---- radar: other walls with a place, around this wall's place; up = where you are looking ----
+  const radarCv = root.querySelector('.v3d-radar');
+  const radarInfo = root.querySelector('.v3d-radarinfo');
+  const radarDots = [];
+  if (radar && radarCv) {
+    const kx = 111.32 * Math.cos((radar.center.lat * Math.PI) / 180), kz = 110.54; // km per degree
+    const rMax = Math.log10(1 + 1000); // the edge of the radar is 1000 km, on a log scale so near walls are not squashed
+    for (const w of (radar.walls || []).slice(0, 300)) {
+      if (typeof w.lat !== 'number' || typeof w.lon !== 'number') continue;
+      const e = (w.lon - radar.center.lon) * kx, n = (w.lat - radar.center.lat) * kz;
+      const km = Math.hypot(e, n);
+      radarDots.push({ w, km, dx: cityFlip * e, dz: -cityFlip * n, r: Math.min(1, Math.log10(1 + km) / rMax) });
+    }
+    const drawRadar = () => {
+      const g = radarCv.getContext('2d'), S = radarCv.width, C = S / 2, R = C - 6;
+      g.clearRect(0, 0, S, S);
+      g.fillStyle = 'rgba(8,20,16,.72)'; g.beginPath(); g.arc(C, C, R + 4, 0, 7); g.fill();
+      g.strokeStyle = 'rgba(120,255,170,.35)'; g.lineWidth = 2;
+      for (const f of [0.34, 0.67, 1]) { g.beginPath(); g.arc(C, C, R * f, 0, 7); g.stroke(); }
+      g.beginPath(); g.moveTo(C, C - R); g.lineTo(C, C + R); g.moveTo(C - R, C); g.lineTo(C + R, C); g.stroke();
+      const sy = Math.sin(st.yaw), cy = Math.cos(st.yaw);
+      for (const d of radarDots) {
+        const len = Math.hypot(d.dx, d.dz) || 1, ux = d.dx / len, uz = d.dz / len;
+        const up = ux * -sy + uz * -cy, right = ux * cy + uz * -sy; // forward = (-sin, -cos), right = (cos, -sin)
+        d.px = C + right * d.r * R; d.py = C - up * d.r * R;
+        g.fillStyle = d === radarSel ? '#ffd23c' : '#ff5a3c'; g.beginPath(); g.arc(d.px, d.py, d === radarSel ? 11 : 8, 0, 7); g.fill();
+        g.strokeStyle = '#fff'; g.lineWidth = 2; g.stroke();
+      }
+      g.fillStyle = '#7dffb0'; g.beginPath(); g.moveTo(C, C - 11); g.lineTo(C + 8, C + 9); g.lineTo(C - 8, C + 9); g.closePath(); g.fill(); // you
+      g.fillStyle = '#fff'; g.font = '700 22px system-ui'; g.textAlign = 'center';
+      const nx = -cityFlip * 0, nz = -cityFlip; // world direction of north
+      const nUp = nx * -sy + nz * -cy, nRight = nx * cy + nz * -sy;
+      g.fillText('N', C + nRight * (R - 4), C - nUp * (R - 4) + 7);
+    };
+    var radarSel = null;
+    radarDraw = drawRadar;
+    radarCv.addEventListener('click', (ev) => {
+      const r = radarCv.getBoundingClientRect(), s = radarCv.width / r.width;
+      const x = (ev.clientX - r.left) * s, y = (ev.clientY - r.top) * s;
+      let best = null, bd = 26;
+      for (const d of radarDots) { const dd = Math.hypot(d.px - x, d.py - y); if (dd < bd) { bd = dd; best = d; } }
+      radarSel = best; dirty = true;
+      radarInfo.hidden = !best;
+      if (best) {
+        radarInfo.textContent = '';
+        const t = document.createElement('div'); t.textContent = `/${best.w.slug}${best.w.place ? ' · ' + best.w.place : ''}`;
+        const k = document.createElement('small'); k.textContent = best.km < 10 ? `${best.km.toFixed(1)} km` : `${Math.round(best.km)} km`;
+        const btn = document.createElement('button'); btn.type = 'button'; btn.textContent = 'Ir para este muro';
+        btn.addEventListener('click', () => { if (document.pointerLockElement) document.exitPointerLock(); radar.go(best.w.slug); });
+        radarInfo.append(t, k, btn);
+      }
+    });
   }
 
   function frame(now) {
@@ -726,6 +796,8 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     if (near !== nearNpc) { nearNpc = near; talkBtn.hidden = !near || !!talk; }
     root.dataset.view = [st.x, st.z, st.yaw, st.pitch].map((v) => v.toFixed(3)).join(','); // read by the tests
     renderer.render(scene, camera);
+    if (radarDraw) radarDraw();
+    root.dataset.radar = String(radarDots.length);
     dirty = false;
     if (msg) { msg.remove(); }
   }
