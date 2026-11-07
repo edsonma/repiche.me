@@ -123,11 +123,12 @@
           <div class="placebox">
             <template v-if="!setupGeo">
               <button type="button" class="secondary" :disabled="geoBusy" @click="useLocation">{{ geoBusy ? 'buscando…' : '📍 Usar minha localização' }}</button>
-              <small>Só aparece no mapa o bairro/região (arredondado, ~1 km). Nada é pedido sem você clicar.</small>
+              <button type="button" class="secondary" @click="openMap(true)">🗺 Escolher no mapa</button>
+              <small>O 3D copia a rua real desse ponto (precisão de ~10 m). Escolha um lugar público, como uma praça ou rua, não a sua casa. Nada é pedido sem você clicar.</small>
             </template>
             <template v-else>
               <input v-model="setupPlace" maxlength="40" placeholder="Nome do lugar (ex.: Praça da Sé)" autocomplete="off" aria-label="Nome do lugar">
-              <small>Região aprox. {{ setupGeo.lat }}, {{ setupGeo.lon }} · <a href="#" @click.prevent="clearLocation">remover</a></small>
+              <small>Ponto {{ setupGeo.lat }}, {{ setupGeo.lon }} (~10 m) · <a href="#" @click.prevent="openMap(true)">mudar no mapa</a> · <a href="#" @click.prevent="clearLocation">remover</a></small>
               <label class="photoopt"><input type="checkbox" v-model="setupScene"> Montar o cenário do lugar no 3D <small>(prédios e ruas do OpenStreetMap)</small></label>
               <label class="photoopt" v-if="meta.photos"><input type="checkbox" v-model="setupPhoto"> Usar uma foto aberta do lugar como parede <small>(Mapillary, CC BY-SA)</small></label>
             </template>
@@ -165,13 +166,15 @@
       <!-- map of walls tied to a place -->
       <div class="modal-backdrop" v-if="showMap" @click.self="closeMap">
         <div class="modal mapmodal">
-          <h2>Muros no mapa</h2>
+          <h2>{{ mapPick ? 'Escolha o lugar do muro' : 'Muros no mapa' }}</h2>
+          <small v-if="mapPick">Toque no mapa no ponto exato (use o satélite para achar a rua).</small>
           <div class="maptabs" role="tablist">
             <button type="button" :class="{ on: mapKind === 'map' }" @click="setMapKind('map')">Mapa</button>
             <button type="button" :class="{ on: mapKind === 'sat' }" @click="setMapKind('sat')">Satélite</button>
           </div>
           <div class="map" ref="mapEl"></div>
-          <small v-if="!mapWalls.length">Nenhum muro com lugar ainda. Crie um muro e marque o lugar!</small>
+          <button v-if="mapPick" type="button" class="usepick" :disabled="!pickPt" @click="usePick">{{ pickPt ? 'Usar este ponto' : 'Toque no mapa para escolher' }}</button>
+          <small v-if="!mapWalls.length && !mapPick">Nenhum muro com lugar ainda. Crie um muro e marque o lugar!</small>
           <button class="close" @click="closeMap">fechar</button>
         </div>
       </div>

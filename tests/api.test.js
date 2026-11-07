@@ -173,7 +173,7 @@ const TOKEN = 'correct-horse-battery-staple';
   const setupG = (slug, body) => fetch(`${gs.base}/api/walls/${slug}/setup`, { method: 'POST', headers: J, body: JSON.stringify({ background: BG, ...body }) });
   let gr = await setupG('praca', { geo: { lat: -23.550520, lon: -46.633308, place: '  Praça\u202E da   Sé ' } });
   let jr = await gr.json();
-  check('wall can be tied to a place; coordinates rounded to ~1 km, text cleaned', gr.status === 201 && jr.geo.lat === -23.55 && jr.geo.lon === -46.63 && jr.geo.place === 'Praça da Sé', JSON.stringify(jr));
+  check('wall can be tied to a place; coordinates rounded to ~11 m (4 decimals), text cleaned', gr.status === 201 && jr.geo.lat === -23.5505 && jr.geo.lon === -46.6333 && jr.geo.place === 'Praça da Sé', JSON.stringify(jr));
   await sleep(2200);
   check('invalid places are rejected (range, type, NaN-like)', (await setupG('ruim1', { geo: { lat: 99, lon: 0 } })).status === 400);
   await sleep(2200);
@@ -183,7 +183,7 @@ const TOKEN = 'correct-horse-battery-staple';
   check('place is optional', gr.status === 201 && !(await gr.json()).geo);
   check('GET wall returns its place', (await (await fetch(`${gs.base}/api/walls/praca`)).json()).geo.place === 'Praça da Sé');
   const mp = await (await fetch(`${gs.base}/api/map`)).json();
-  check('/api/map lists only walls that have a place', mp.length === 1 && mp[0].slug === 'praca' && mp[0].lat === -23.55 && !('posts' in mp[0]), JSON.stringify(mp));
+  check('/api/map lists only walls that have a place', mp.length === 1 && mp[0].slug === 'praca' && mp[0].lat === -23.5505 && !('posts' in mp[0]), JSON.stringify(mp));
   await sleep(2200);
   check('place cannot be changed afterwards (setup again -> 409)', (await setupG('praca', { geo: { lat: 1, lon: 1 } })).status === 409);
   check('geolocation allowed only for our own page', /geolocation=\(self\)/.test((await fetch(gs.base + '/')).headers.get('permissions-policy')));
@@ -240,7 +240,9 @@ const TOKEN = 'correct-horse-battery-staple';
       hits2.push(decodeURIComponent(body));
       const g = (pts) => pts.map(([la, lo]) => ({ lat: -23.55 + la, lon: -46.63 + lo }));
       const els = [
-        { type: 'way', tags: { building: 'yes', 'building:levels': '5' }, geometry: g([[0.0012, -0.0006], [0.0012, 0.0000], [0.0018, 0.0000], [0.0018, -0.0006]]) },
+        { type: 'way', tags: { building: 'yes', 'building:levels': '5', 'building:colour': 'salmon' }, geometry: g([[0.0012, -0.0006], [0.0012, 0.0000], [0.0018, 0.0000], [0.0018, -0.0006]]) },
+        { type: 'node', tags: { natural: 'tree' }, lat: -23.5499, lon: -46.6299 },
+        { type: 'node', tags: { natural: 'tree' }, lat: 'x', lon: 1 },
         { type: 'way', tags: { building: 'house' }, geometry: g([[0, 0], [0.0001, 0]]) },
         { type: 'way', tags: { highway: 'residential' }, geometry: g([[0.0008, -0.0015], [0.0008, 0.0015]]) },
         { type: 'way', tags: { highway: 'weird' }, geometry: g([[0, 0], [0.001, 0]]) },
@@ -270,6 +272,7 @@ const TOKEN = 'correct-horse-battery-staple';
   check('the scene is fetched in the background (1 building + 1 road, junk dropped; coast, sea, sand and park kept)', gotScene && gotScene.buildings === 1 && gotScene.roads === 1 && gotScene.areas === 4, JSON.stringify(gotScene));
   check('Overpass is asked once, with a bbox, for buildings, roads and terrain', hits2.length === 1 && /way\["building"\]/.test(hits2[0]) && /way\["highway"\]/.test(hits2[0]) && /coastline/.test(hits2[0]) && /geom\(/.test(hits2[0]));
   const sc = await (await fetch(`${os.base}/api/walls/bairro/scene`)).json();
+  check('real trees and building colours/road widths come through', sc.t.length === 2 && sc.b.every((x) => x.length >= 2) && sc.r[0][0] === 6, JSON.stringify([sc.t, sc.r[0][0]]));
   check('terrain areas are typed (c coast, w water, s sand, g green)', sc.a.map((x) => x[0]).sort().join('') === 'cgsw', JSON.stringify(sc.a).slice(0, 200));
   check('scene JSON is compact metres around the place (north = -z)', sc.b.length === 1 && sc.b[0][0] === 15 && sc.b[0][1].length === 8 && sc.b[0][1].every(Number.isFinite) && sc.b[0][1][1] < 0, JSON.stringify(sc).slice(0, 160));
   check('GET wall flags the scene; unknown walls have none', !!(await (await fetch(`${os.base}/api/walls/bairro`)).json()).scene && (await fetch(`${os.base}/api/walls/nada/scene`)).status === 404 && (await fetch(`${os.base}/api/walls/__proto__/scene`)).status === 404);

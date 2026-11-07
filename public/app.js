@@ -70,7 +70,7 @@ createApp({
       if (!navigator.geolocation) { setupError.value = 'Seu navegador não informa a localização.'; return; }
       geoBusy.value = true;
       navigator.geolocation.getCurrentPosition(
-        (pos) => { setupGeo.value = { lat: Math.round(pos.coords.latitude * 100) / 100, lon: Math.round(pos.coords.longitude * 100) / 100 }; geoBusy.value = false; },
+        (pos) => { setupGeo.value = { lat: Math.round(pos.coords.latitude * 1e4) / 1e4, lon: Math.round(pos.coords.longitude * 1e4) / 1e4 }; geoBusy.value = false; },
         () => { geoBusy.value = false; setupError.value = 'Não consegui pegar sua localização (permissão negada?).'; },
         { maximumAge: 600000, timeout: 15000 });
     }
@@ -89,8 +89,12 @@ createApp({
       (k === 'sat' ? satLayer : streetLayer).addTo(leafletMap);
     }
     const loadScript = (src) => new Promise((ok, no) => { const el = document.createElement('script'); el.src = src; el.onload = ok; el.onerror = no; document.head.appendChild(el); });
-    async function openMap() {
-      showMap.value = true; mapWalls.value = [];
+    const mapPick = ref(false);   // the map is open to choose the place of a new wall
+    const pickPt = ref(null);
+    let pickMarker = null;
+    function usePick() { if (pickPt.value) { setupGeo.value = { ...pickPt.value }; } closeMap(); }
+    async function openMap(pick = false) {
+      showMap.value = true; mapWalls.value = []; mapPick.value = pick === true; pickPt.value = null; pickMarker = null;
       try {
         if (!window.L) {
           const css = document.createElement('link'); css.rel = 'stylesheet'; css.href = '/vendor/leaflet/leaflet.css'; document.head.appendChild(css);
@@ -100,8 +104,13 @@ createApp({
         await Vue.nextTick();
         if (!mapEl.value) return;
         const L = window.L;
-        const here = wallGeo.value;
-        leafletMap = L.map(mapEl.value, { worldCopyJump: true }).setView(here ? [here.lat, here.lon] : [-15.8, -47.9], here ? 12 : 4);
+        const here = mapPick.value ? setupGeo.value : wallGeo.value;
+        leafletMap = L.map(mapEl.value, { worldCopyJump: true }).setView(here ? [here.lat, here.lon] : [-15.8, -47.9], here ? (mapPick.value ? 17 : 12) : 4);
+        leafletMap.on('click', (ev) => {
+          if (!mapPick.value) return;
+          pickPt.value = { lat: Math.round(ev.latlng.lat * 1e4) / 1e4, lon: Math.round(ev.latlng.lng * 1e4) / 1e4 };
+          if (!pickMarker) pickMarker = L.circleMarker(ev.latlng, { radius: 9, color: '#fff', weight: 3, fillColor: '#2d9cff', fillOpacity: 1 }).addTo(leafletMap); else pickMarker.setLatLng(ev.latlng);
+        });
         streetLayer = L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '© OpenStreetMap' });
         satLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { maxZoom: 19, maxNativeZoom: 18, attribution: 'Tiles © Esri — Esri, Maxar, Earthstar Geographics, GIS User Community' });
         setMapKind(mapKind.value);
@@ -119,8 +128,8 @@ createApp({
           m.bindPopup(box);
           pts.push([w.lat, w.lon]);
         }
-        if (!here && pts.length > 1) leafletMap.fitBounds(pts, { padding: [30, 30], maxZoom: 12 });
-        else if (!here && pts.length === 1) leafletMap.setView(pts[0], 10);
+        if (!here && !mapPick.value && pts.length > 1) leafletMap.fitBounds(pts, { padding: [30, 30], maxZoom: 12 });
+        else if (!here && !mapPick.value && pts.length === 1) leafletMap.setView(pts[0], 10);
       } catch (e) { error.value = 'Mapa indisponível.'; showMap.value = false; }
     }
     function closeMap() { showMap.value = false; if (leafletMap) { leafletMap.remove(); leafletMap = null; streetLayer = satLayer = null; } }
@@ -531,7 +540,7 @@ createApp({
       meta, draft, showNav, showCredits, walls, newSlug,
       zoom, zoomLabel, ZOOM_MAX, viewportEl, wallEl, ghostEl, baseW, wallH, placing, draggingGhost,
       visiblePosts, selectedId, toggleSelect, support, isSupported, timeLeft,
-      classic, toggleClassic, setupGeo, setupPlace, setupPhoto, setupScene, wallPhoto, photoUrl, photoCredit, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapKind, setMapKind, mapEl, mapWalls, openMap, closeMap,
+      classic, toggleClassic, setupGeo, setupPlace, setupPhoto, setupScene, wallPhoto, photoUrl, photoCredit, geoBusy, wallGeo, useLocation, clearLocation, showMap, mapPick, pickPt, usePick, mapKind, setMapKind, mapEl, mapWalls, openMap, closeMap,
       opening3d, open3D, palette, showSetup, setupDismissed, setupName, setupError, existsName, creating, cleanSetupName, createWall,
       scribbleStyle, ghostStyle, setZoom, zoomBy,
       onSubmit, cancelPlacing, dragStart, dragMove, dragEnd,

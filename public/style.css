@@ -328,3 +328,6 @@ button:disabled { opacity: .5; cursor: wait; }
 .modal .maptabs button { padding: 5px 14px; border: 1px solid #0004; background: #fff; color: #333; font: 600 13px system-ui, sans-serif; cursor: pointer; }
 .modal .maptabs button:first-child { border-radius: 6px 0 0 6px; } .modal .maptabs button:last-child { border-radius: 0 6px 6px 0; border-left: 0; }
 .modal .maptabs button.on { background: #ff5a3c; color: #fff; border-color: #ff5a3c; }
+
+.usepick { padding: 8px 14px; border: 0; border-radius: 8px; background: #2d9cff; color: #fff; font: 700 14px system-ui, sans-serif; cursor: pointer; }
+.usepick:disabled { background: #999; cursor: default; }

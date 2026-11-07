@@ -7,13 +7,14 @@
 //  - pixel ratio capped, frames are only rendered when something changed (clouds tick at ~12 fps)
 //  - nothing runs while the tab is hidden; everything is disposed on close
 import * as THREE from '/vendor/three.js';
+import { buildCity, genericCity, pushOutOfPoly } from '/city.js';
 
 const PX_PER_M = 200;       // 200 board px = 1 meter
 const MAX_H_PX = 1400;      // tallest part of the board shown in 3D (7 m)
 const MIN_H_PX = 700;
 const THICK = 0.4;          // wall thickness (m)
 const EYE = 1.6;            // eye height (m)
-const WALK_X = 210, WALK_Z0 = -190, WALK_Z1 = 230; // you can walk all over the map; only these outer limits stop you
+const WALK_X = 290, WALK_Z0 = -290, WALK_Z1 = 290; // you can walk all over the map; only these outer limits stop you
 const BODY = 0.3;            // your radius (m) for bumping into the wall, buildings and trees
 const PITCH_MAX = 1.5;                       // free look like Minecraft; only walking is limited
 const SEG_PX = 3360;                         // the wall is built from segments so each texture stays sharp
@@ -21,33 +22,6 @@ const SPEED = 3;            // m/s
 
 // ---------- tiny seeded RNG so textures are the same every time ----------
 function rng(seed) { let s = seed >>> 0; return () => ((s = (s * 1664525 + 1013904223) >>> 0) / 4294967296); }
-
-// ---------- a generic town street for walls without a place: same format as the OSM data ----------
-// (map metres; the wall's side of the map is z<0, the street lies at z>0)
-function genericCity() {
-  const r = rng(2011), b = [], rd = [];
-  rd.push([9, [-160, 6, 160, 6]], [9, [-160, 96, 160, 96]], [7, [-48, 6, -48, 160]], [7, [62, 6, 62, 160]]);
-  for (const [z0, depthMax] of [[13, 22], [37, 24], [103, 22]]) {
-    for (let x = -150; x < 150;) {
-      const w = 8 + r() * 9, d = 12 + r() * (depthMax - 12), h = 6 + Math.floor(r() * 7) * 3.2;
-      if (Math.abs(x + w / 2 + 48) < 9 || Math.abs(x + w / 2 - 62) < 9) { x += 10; continue; } // leave the cross streets open
-      b.push([h, [x, z0, x + w, z0, x + w, z0 + d, x, z0 + d]]);
-      x += w + (r() < 0.25 ? 4 + r() * 6 : 0.6);
-    }
-  }
-  return { b, r: rd };
-}
-// 3 m x 3 m facade cell with a window; tinted per building by vertex colours
-function windowTexture() {
-  const c = document.createElement('canvas'); c.width = c.height = 96;
-  const g = c.getContext('2d');
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, 96, 96);
-  g.fillStyle = '#9fb4c4'; g.fillRect(22, 18, 52, 50);        // glass
-  g.fillStyle = '#6d8296'; g.fillRect(22, 18, 52, 12);        // darker top (sky reflection)
-  g.fillStyle = '#e8e8e8'; g.fillRect(22, 66, 52, 5);         // sill
-  g.strokeStyle = '#d6d6d6'; g.lineWidth = 3; g.strokeRect(21, 17, 54, 52); g.beginPath(); g.moveTo(48, 18); g.lineTo(48, 68); g.stroke();
-  return c;
-}
 
 // ---------- procedural wall textures drawn over the wall color (canvas 2D, no image files) ----------
 function paintSurface(ctx, W, H, texture, color, seed = 7) {
@@ -355,8 +329,9 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
 
   // ---- ground: blocky grass + a dirt walkway in front of the wall ----
   // with real map data the ground is dry/urban (parks, sand and water are drawn from the map); the generic town keeps its lawn
-  const grassTex = track(cityData ? pixelTexture([150, 147, 134], 22, 16, 5) : pixelTexture([92, 150, 58], 38, 16, 3)); grassTex.repeat.set(240, 240);
-  const ground = new THREE.Mesh(track(new THREE.PlaneGeometry(480, 480)), track(new THREE.MeshLambertMaterial({ map: grassTex })));
+  const GROUND = cityData ? 1400 : 480;
+  const grassTex = track(cityData ? pixelTexture([150, 147, 134], 22, 16, 5) : pixelTexture([92, 150, 58], 38, 16, 3)); grassTex.repeat.set(GROUND / 2, GROUND / 2);
+  const ground = new THREE.Mesh(track(new THREE.PlaneGeometry(GROUND, GROUND)), track(new THREE.MeshLambertMaterial({ map: grassTex })));
   ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
   const dirtTex = track(pixelTexture([134, 96, 62], 30, 16, 9)); dirtTex.repeat.set(Wm + 6, 3);
   const path = new THREE.Mesh(track(new THREE.PlaneGeometry(Wm + 6, 3)), track(new THREE.MeshLambertMaterial({ map: dirtTex })));
@@ -394,153 +369,27 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
     seg.position.set(-Wm / 2 + (x0 + sw / 2) / PX_PER_M, Hm / 2, 0); seg.castShadow = true; seg.receiveShadow = true; scene.add(seg);
   }
 
-  // ---- the street around the place, rebuilt from OpenStreetMap data (flat roads + extruded buildings) ----
-  // Two merged meshes only. Anything that would overlap the wall and its walkway is left out, so the
-  // wall stands in a clearing of the real neighbourhood.
-  let cityFlip = 1; // 1: the map's north is straight ahead of the wall; -1: the map was turned around
-  const solids = []; // axis-aligned boxes you can't walk through: the wall and the buildings
-  solids.push({ x0: -Wm / 2 - 0.1, x1: Wm / 2 + 0.1, z0: -THICK / 2 - 0.1, z1: THICK / 2 + 0.1 });
-  const city = cityData || genericCity();
-  if (city && Array.isArray(city.b)) {
-    const ZSHIFT = 16; // the map is moved so its centre is on the far edge of the walkway: the street lies in front of you, behind your back
-    // The wall's side of the map is hidden behind the wall, so turn the map 180 degrees if its busier half is there
-    const heavy = (a) => a.reduce((n, [, p]) => n + (Array.isArray(p) && p.length > 1 && p[1] > 0 ? 1 : -1), 0);
-    const FLIP = heavy(city.b) < 0 ? -1 : 1;
-    cityFlip = FLIP;
-    const place2 = (pts) => pts.map((n, i) => (i % 2 ? FLIP * n + ZSHIFT : FLIP * n));
-    const zone = { x0: -Wm / 2 - 6, x1: Wm / 2 + 6, z0: -3, z1: 16 };
-    const inZone = (x, z) => x > zone.x0 && x < zone.x1 && z > zone.z0 && z < zone.z1;
-    const num = (n) => typeof n === 'number' && Number.isFinite(n);
-    const pos = [], nor = [], col = [], uvs = [];
-    let nB = 0, nR = 0;
-    const pushGeo = (g, c) => {
-      const g2 = g.index ? g.toNonIndexed() : g;
-      const p = g2.attributes.position.array, n = g2.attributes.normal.array;
-      for (let i = 0; i < p.length; i++) { pos.push(p[i]); nor.push(n[i]); }
-      for (let i = 0; i < p.length / 3; i++) col.push(c.r, c.g, c.b);
-      const u = g2.attributes.uv.array; for (let i = 0; i < u.length; i++) uvs.push(u[i]);
-      g.dispose(); if (g2 !== g) g2.dispose();
-    };
-    const pal = [0xd9c8a9, 0xc9b79c, 0xe2d6c1, 0xb9a58a, 0xd4b8a0, 0xcfd2c4, 0xc7a9a0];
-    for (let [h, pts] of city.b.slice(0, 500)) {
-      if (!num(h) || !Array.isArray(pts) || pts.length < 6 || pts.length > 80 || !pts.every(num)) continue;
-      let xs = 0, zs = 0;
-      pts = place2(pts);
-      for (let i = 0; i < pts.length; i += 2) { xs += pts[i]; zs += pts[i + 1]; }
-      const cx = xs / (pts.length / 2), cz = zs / (pts.length / 2);
-      let hit = inZone(cx, cz);
-      for (let i = 0; i < pts.length && !hit; i += 2) hit = inZone(pts[i], pts[i + 1]);
-      if (hit) continue;
-      try {
-        const sh = new THREE.Shape();
-        for (let i = 0; i < pts.length; i += 2) (i ? sh.lineTo : sh.moveTo).call(sh, pts[i], -pts[i + 1]);
-        const eg = new THREE.ExtrudeGeometry(sh, { depth: Math.min(120, Math.max(2.5, h)), bevelEnabled: false });
-        eg.rotateX(-Math.PI / 2);
-        const c = new THREE.Color(pal[Math.abs(Math.floor(cx * 7 + cz * 3)) % pal.length]);
-        pushGeo(eg, c); nB++;
-        let bx0 = 1e9, bx1 = -1e9, bz0 = 1e9, bz1 = -1e9;
-        for (let i = 0; i < pts.length; i += 2) { bx0 = Math.min(bx0, pts[i]); bx1 = Math.max(bx1, pts[i]); bz0 = Math.min(bz0, pts[i + 1]); bz1 = Math.max(bz1, pts[i + 1]); }
-        solids.push({ x0: bx0, x1: bx1, z0: bz0, z1: bz1 });
-      } catch { /* a broken footprint: skip it */ }
-    }
-    if (pos.length) {
-      const bg = track(new THREE.BufferGeometry());
-      bg.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-      bg.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
-      bg.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
-      bg.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
-      const wt = track(new THREE.CanvasTexture(windowTexture()));
-      wt.wrapS = wt.wrapT = THREE.RepeatWrapping; wt.repeat.set(1 / 3, 1 / 3); wt.colorSpace = THREE.SRGBColorSpace; wt.anisotropy = 4;
-      const bm = new THREE.Mesh(bg, track(new THREE.MeshLambertMaterial({ vertexColors: true, map: wt })));
-      bm.receiveShadow = true; scene.add(bm);
-    }
-    // terrain from the map: water, sand, parks and the coastline (the sea is on the right-hand side of a coastline)
-    if (cityData && Array.isArray(city.a)) {
-      const tp = [], tc = [];
-      const tri = (ax, az, bx, bz, cx, cz, y, c) => { tp.push(ax, y, az, bx, y, bz, cx, y, cz); for (let k = 0; k < 3; k++) tc.push(c.r, c.g, c.b); };
-      const WATER = new THREE.Color(0x3f86bf), SAND = new THREE.Color(0xe6d6a2), GREEN = new THREE.Color(0x73a957);
-      const Y = { g: 0.006, s: 0.01, w: 0.014 }, COL = { g: GREEN, s: SAND, w: WATER };
-      for (let [kind, pts] of city.a.slice(0, 150)) {
-        if (!['c', 'w', 's', 'g'].includes(kind) || !Array.isArray(pts) || pts.length < 4 || pts.length > 80 || !pts.every(num)) continue;
-        pts = place2(pts);
-        if (kind === 'c') {
-          for (let i = 0; i + 3 < pts.length; i += 2) {
-            const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
-            if (inZone((ax + bx) / 2, (az + bz) / 2)) continue;
-            const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1, nx = -dz / len, nz = dx / len; // right-hand normal
-            const D = 500, B = 18;                                  // sea 500 m deep; a beach strip of 18 m on the land side
-            tri(ax, az, bx, bz, bx + nx * D, bz + nz * D, Y.w, WATER); tri(ax, az, bx + nx * D, bz + nz * D, ax + nx * D, az + nz * D, Y.w, WATER);
-            tri(ax, az, bx, bz, bx - nx * B, bz - nz * B, Y.s, SAND); tri(ax, az, bx - nx * B, bz - nz * B, ax - nx * B, az - nz * B, Y.s, SAND);
-          }
-          continue;
-        }
-        let cx = 0, cz = 0; for (let i = 0; i < pts.length; i += 2) { cx += pts[i]; cz += pts[i + 1]; }
-        if (inZone(cx / (pts.length / 2), cz / (pts.length / 2))) continue;
-        try {
-          const sh = new THREE.Shape();
-          for (let i = 0; i < pts.length; i += 2) (i ? sh.lineTo : sh.moveTo).call(sh, pts[i], -pts[i + 1]);
-          const sg = new THREE.ShapeGeometry(sh); sg.rotateX(-Math.PI / 2);
-          const ng = sg.index ? sg.toNonIndexed() : sg, p = ng.attributes.position.array;
-          for (let i = 0; i < p.length; i += 3) tri(p[i], p[i + 2], p[i + 3], p[i + 5], p[i + 6], p[i + 8], Y[kind], COL[kind]), i += 6;
-          sg.dispose(); if (ng !== sg) ng.dispose();
-        } catch { /* skip a broken polygon */ }
-      }
-      if (tp.length) {
-        const tg = track(new THREE.BufferGeometry());
-        tg.setAttribute('position', new THREE.Float32BufferAttribute(tp, 3));
-        tg.setAttribute('color', new THREE.Float32BufferAttribute(tc, 3));
-        tg.computeVertexNormals();
-        const tm = new THREE.Mesh(tg, track(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 })));
-        tm.receiveShadow = true; scene.add(tm);
-        root.dataset.terrain = String(tp.length / 9); // triangles of water / sand / parks (used by tests)
-      }
-    }
-    // roads like a street view: sidewalk edge, asphalt, and dashed centre line on the wider ones
-    const rp = [], rc = [];
-    const quad = (ax, az, bx, bz, half, y, c) => {
-      const dx = bx - ax, dz = bz - az, len = Math.hypot(dx, dz) || 1, nx = (-dz / len) * half, nz = (dx / len) * half;
-      rp.push(ax + nx, y, az + nz, bx + nx, y, bz + nz, ax - nx, y, az - nz, bx + nx, y, bz + nz, bx - nx, y, bz - nz, ax - nx, y, az - nz);
-      for (let k = 0; k < 6; k++) rc.push(c.r, c.g, c.b);
-    };
-    const SIDE = new THREE.Color(0xbdbab0), ASPH = new THREE.Color(0x45464b), PATH = new THREE.Color(0xc9b99a), LINE = new THREE.Color(0xe9e4c8);
-    for (let [w, pts] of (city.r || []).slice(0, 200)) {
-      if (!num(w) || !Array.isArray(pts) || pts.length < 4 || pts.length > 80 || !pts.every(num)) continue;
-      pts = place2(pts);
-      const half = Math.min(6, Math.max(0.5, w / 2));
-      for (let i = 0; i + 3 < pts.length; i += 2) {
-        const ax = pts[i], az = pts[i + 1], bx = pts[i + 2], bz = pts[i + 3];
-        if (inZone((ax + bx) / 2, (az + bz) / 2) || inZone(ax, az) || inZone(bx, bz)) continue;
-        nR++;
-        if (w < 3) { quad(ax, az, bx, bz, half, 0.03, PATH); continue; }
-        quad(ax, az, bx, bz, half + 1.6, 0.03, SIDE);
-        quad(ax, az, bx, bz, half, 0.06, ASPH);
-        if (w >= 6) { // dashes: 2 m painted, 3 m gap
-          const len = Math.hypot(bx - ax, bz - az), ux = (bx - ax) / len, uz = (bz - az) / len;
-          for (let t = 0; t + 2 <= len && t < 400; t += 5) quad(ax + ux * t, az + uz * t, ax + ux * (t + 2), az + uz * (t + 2), 0.1, 0.09, LINE);
-        }
-      }
-    }
-    if (rp.length) {
-      const rg = track(new THREE.BufferGeometry());
-      rg.setAttribute('position', new THREE.Float32BufferAttribute(rp, 3));
-      rg.setAttribute('color', new THREE.Float32BufferAttribute(rc, 3));
-      rg.computeVertexNormals();
-      const rm = new THREE.Mesh(rg, track(new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 })));
-      rm.receiveShadow = true; scene.add(rm);
-    }
-    root.dataset.city = `${nB},${nR}`; // buildings, road segments drawn (used by tests)
-  }
+  // ---- the town around the wall (real map data when the wall has a place, else a generic street), see city.js ----
+  const solids = [{ x0: -Wm / 2 - 0.1, x1: Wm / 2 + 0.1, z0: -THICK / 2 - 0.1, z1: THICK / 2 + 0.1 }]; // boxes you can't walk through (the wall)
+  const real = !!cityData && Array.isArray(cityData.b);
+  const town = buildCity({ city: real ? cityData : genericCity(), real, Wm, THICK, scene, track, maxAniso: Math.min(4, renderer.capabilities.getMaxAnisotropy()) });
+  const cityXf = town.xf;
+  root.dataset.city = `${town.buildings},${town.roadSegs}`; // buildings and street segments drawn (used by tests)
+  if (town.terrain) root.dataset.terrain = String(town.terrain);
+  root.dataset.aligned = town.aligned ? '1' : '0';
+  if (real) { scene.fog.near = 60; scene.fog.far = 330; camera.far = 700; camera.updateProjectionMatrix(); }
 
   // ---- blocky trees, instanced (3 draw calls for all of them); their shadows fall across the wall ----
   const blockers = []; // circles you can't walk through: { x, z, r }
   const treeSpots = [];
   const tr = rng(99);
   const NPC_X = 2.2, NPC_Z = 3.6;
-  for (let x = -Wm / 2 + 2; x < Wm / 2; x += 5 + tr() * 7) { // in front of the wall
+  if (!real) for (let x = -Wm / 2 + 2; x < Wm / 2; x += 5 + tr() * 7) { // in front of the wall
     const z = 4.5 + tr() * 6, s2 = 1.1 + tr() * 0.6;
     if (Math.hypot(x - NPC_X, z - NPC_Z) > 3 && Math.hypot(x, z - 7.5) > 2.5) treeSpots.push({ x, z, s: s2 });
   }
-  if (!cityData) for (let x = -Wm / 2 - 4; x < Wm / 2 + 4; x += 4 + tr() * 6) treeSpots.push({ x, z: -(4 + tr() * 14), s: 1.3 + tr() * 0.7 }); // behind (seen over the wall)
+  if (!real) for (let x = -Wm / 2 - 4; x < Wm / 2 + 4; x += 4 + tr() * 6) treeSpots.push({ x, z: -(4 + tr() * 14), s: 1.3 + tr() * 0.7 }); // behind (seen over the wall)
+  for (const t of town.treeSpots) treeSpots.push(t); // real trees from the map
   const trunkM = track(new THREE.MeshLambertMaterial({ color: 0x6b4a2b })), leafM = track(new THREE.MeshLambertMaterial({ color: 0x3f8a3a }));
   const trunks = new THREE.InstancedMesh(track(new THREE.BoxGeometry(0.4, 2.4, 0.4)), trunkM, treeSpots.length);
   const leaves = new THREE.InstancedMesh(track(new THREE.BoxGeometry(2, 1.6, 2)), leafM, treeSpots.length);
@@ -747,6 +596,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
         if (m === l) st.x = s.x0 - BODY; else if (m === r) st.x = s.x1 + BODY; else if (m === f) st.z = s.z0 - BODY; else st.z = s.z1 + BODY;
       }
     }
+    for (const poly of town.polys) pushOutOfPoly(st, poly, BODY); // buildings follow their real footprint
     for (const b of blockers) {
       const dx = st.x - b.x, dz = st.z - b.z, d = Math.hypot(dx, dz), min = b.r + 0.3;
       if (d < min && d > 1e-4) { st.x = b.x + (dx / d) * min; st.z = b.z + (dz / d) * min; }
@@ -765,7 +615,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
       if (typeof w.lat !== 'number' || typeof w.lon !== 'number') continue;
       const e = (w.lon - radar.center.lon) * kx, n = (w.lat - radar.center.lat) * kz;
       const km = Math.hypot(e, n);
-      radarDots.push({ w, km, dx: cityFlip * e, dz: -cityFlip * n, r: Math.min(1, Math.log10(1 + km) / rMax) });
+      radarDots.push({ w, km, dx: cityXf.a * e - cityXf.b * n, dz: cityXf.c * e - cityXf.d * n, r: Math.min(1, Math.log10(1 + km) / rMax) });
     }
     const drawRadar = () => {
       const g = radarCv.getContext('2d'), S = radarCv.width, C = S / 2, R = C - 6;
@@ -784,7 +634,7 @@ export async function open3D({ posts, background, wallW, wallH, fonts = [], plac
       }
       g.fillStyle = '#7dffb0'; g.beginPath(); g.moveTo(C, C - 11); g.lineTo(C + 8, C + 9); g.lineTo(C - 8, C + 9); g.closePath(); g.fill(); // you
       g.fillStyle = '#fff'; g.font = '700 22px system-ui'; g.textAlign = 'center';
-      const nx = -cityFlip * 0, nz = -cityFlip; // world direction of north
+      const nx = -cityXf.b, nz = -cityXf.d; // world direction of north (map north is -z before the map is turned)
       const nUp = nx * -sy + nz * -cy, nRight = nx * cy + nz * -sy;
       g.fillText('N', C + nRight * (R - 4), C - nUp * (R - 4) + 7);
     };

@@ -21,9 +21,9 @@ const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
 // JSON on our disk and drawn in the 3D view. OSM has no photos; this is a rebuilt 3D map, not a camera image.
 const SCENE_DIR = path.join(DATA_DIR, 'scenes');
 const OVERPASS_API = process.env.OVERPASS_API || 'https://overpass-api.de/api/interpreter';
-const SCENE_HALF_M = 220;      // metres around the (rounded) place
+const SCENE_HALF_M = 300;      // metres around the (rounded) place
 const SCENE_WAIT_MS = Number(process.env.SCENE_WAIT_MS) || 3000;
-const MAX_AREAS = 150, MAX_BUILDINGS = 500, MAX_ROADS = 200, MAX_PTS = 40;
+const MAX_AREAS = 150, MAX_BUILDINGS = 900, MAX_ROADS = 300, MAX_TREES = 800, MAX_PTS = 40;
 
 // ---- Limits / whitelists -------------------------------------------------
 const MAX_TEXT = 140;
@@ -275,8 +275,9 @@ app.get('/api/meta', (req, res) =>
 );
 
 // ---- Places -------------------------------------------------------------------
-// A wall can optionally be tied to a place, chosen once at creation. Privacy: coordinates are rounded to
-// 2 decimals (about 1 km) before they are stored, so a wall can name a neighbourhood, never a doorstep.
+// A wall can optionally be tied to a place, chosen once at creation (picked on the map or from the GPS). The
+// coordinates are rounded to 4 decimals (about 11 m): enough for the 3D street to match the real place, not a
+// doorstep. The creation form tells people to pick a public place.
 function normalizeGeo(g) {
   if (g === undefined || g === null) return null;
   if (typeof g !== 'object') return false;
@@ -286,7 +287,7 @@ function normalizeGeo(g) {
   const name = typeof place === 'string'
     ? place.replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF]/g, '').replace(/\s+/g, ' ').trim().slice(0, 40)
     : '';
-  return { lat: Math.round(lat * 100) / 100, lon: Math.round(lon * 100) / 100, ...(name ? { place: name } : {}) };
+  return { lat: Math.round(lat * 1e4) / 1e4, lon: Math.round(lon * 1e4) / 1e4, ...(name ? { place: name } : {}) };
 }
 
 // Fetch one open photo near a (rounded) place and keep it on our disk, so visitors never talk to Mapillary
@@ -327,7 +328,7 @@ async function fetchScene(slug, geo) {
   const dLat = SCENE_HALF_M / 110540, dLon = SCENE_HALF_M / (111320 * Math.cos((geo.lat * Math.PI) / 180));
   const bb = [geo.lat - dLat, geo.lon - dLon, geo.lat + dLat, geo.lon + dLon].map((n) => n.toFixed(6)).join(',');
   // buildings, roads, and the ground: water, sand (beaches), parks and the coastline itself
-  const query = `[out:json][timeout:12];(way["building"](${bb});way["highway"](${bb});way["natural"~"^(water|beach|sand|coastline)$"](${bb});way["leisure"~"^(park|garden|pitch|playground)$"](${bb});way["landuse"~"^(grass|forest|meadow|recreation_ground|village_green)$"](${bb}););out tags geom(${bb}) 1400;`; // geom(bbox): geometry clipped to the box, points outside come back null
+  const query = `[out:json][timeout:12];(way["building"](${bb});way["highway"](${bb});way["natural"~"^(water|beach|sand|coastline)$"](${bb});way["leisure"~"^(park|garden|pitch|playground)$"](${bb});way["landuse"~"^(grass|forest|meadow|recreation_ground|village_green)$"](${bb});node["natural"="tree"](${bb}););out tags geom(${bb}) 3000;`; // geom(bbox): geometry clipped to the box, points outside come back null
   const r = await fetch(OVERPASS_API, {
     method: 'POST', signal: AbortSignal.timeout(15000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'repiche.me (graffiti wall; github.com/edsonma/repiche.me)' },
@@ -349,8 +350,13 @@ async function fetchScene(slug, geo) {
     return out;
   };
   const ROAD_W = { motorway: 11, trunk: 10, primary: 9, secondary: 8, tertiary: 7, residential: 6, unclassified: 6, living_street: 5, service: 4, pedestrian: 4, footway: 1.6, path: 1.6, cycleway: 2, steps: 1.6, track: 3 };
-  const b = [], rd = [], ar = [];
+  const b = [], rd = [], ar = [], tr = [];
   for (const e of els) {
+    if (e.type === 'node' && e.tags && e.tags.natural === 'tree' && typeof e.lat === 'number' && typeof e.lon === 'number') {
+      const x = (e.lon - geo.lon) * kx, z = -(e.lat - geo.lat) * kz;
+      if (tr.length < MAX_TREES * 2 && Math.abs(x) < 600 && Math.abs(z) < 600) tr.push(Math.round(x * 10) / 10, Math.round(z * 10) / 10);
+      continue;
+    }
     if (e.type !== 'way' || !Array.isArray(e.geometry) || !e.geometry.length) continue;
     const t = e.tags || {};
     if (t.building && b.length < MAX_BUILDINGS) {
@@ -358,7 +364,9 @@ async function fetchScene(slug, geo) {
       if (!pts || pts.length < 6) continue;
       const lv = parseFloat(t['building:levels']), hh = parseFloat(t.height);
       const h = Number.isFinite(hh) ? hh : Number.isFinite(lv) ? lv * 3 : 6 + (Math.abs(pts[0] * 7 + pts[1] * 13) % 6);
-      b.push([Math.round(Math.min(120, Math.max(2.5, h)) * 10) / 10, pts]);
+      const small = ['garage', 'garages', 'shed', 'roof', 'carport', 'kiosk', 'hut', 'cabin'].includes(t.building);
+      const colour = typeof (t['building:colour'] || t.colour) === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/.test(t['building:colour'] || t.colour) ? (t['building:colour'] || t.colour) : null;
+      b.push([Math.round(Math.min(120, Math.max(2.5, small && !Number.isFinite(hh) && !Number.isFinite(lv) ? 3 : h)) * 10) / 10, pts, ...(colour ? [colour] : [])]);
     } else if ((t.natural || t.leisure || t.landuse) && ar.length < MAX_AREAS) {
       // 'c' = coastline (open line, the sea is on its right-hand side); w / s / g = closed water / sand / green areas
       const kind = t.natural === 'coastline' ? 'c' : t.natural === 'water' ? 'w' : (t.natural === 'beach' || t.natural === 'sand') ? 's' : (t.leisure || t.landuse) ? 'g' : null;
@@ -375,15 +383,17 @@ async function fetchScene(slug, geo) {
       }
     } else if (t.highway && ROAD_W[t.highway] && rd.length < MAX_ROADS) {
       const pts = toXZ(e.geometry);
-      if (pts && pts.length >= 4) rd.push([ROAD_W[t.highway], pts]);
+      const wTag = parseFloat(t.width), lanes = parseFloat(t.lanes);
+      const w = Number.isFinite(wTag) ? wTag : (Number.isFinite(lanes) && ROAD_W[t.highway] >= 4) ? lanes * 3.2 : ROAD_W[t.highway];
+      if (pts && pts.length >= 4) rd.push([Math.round(Math.min(20, Math.max(1.5, w)) * 10) / 10, pts]);
     }
   }
   if (!b.length && !rd.length && !ar.length) return null;
-  const data = JSON.stringify({ b, r: rd, a: ar });
-  if (data.length > 600 * 1024) throw new Error('scene too big');
+  const data = JSON.stringify({ b, r: rd, a: ar, t: tr });
+  if (data.length > 1200 * 1024) throw new Error('scene too big');
   fs.mkdirSync(SCENE_DIR, { recursive: true });
   fs.writeFileSync(path.join(SCENE_DIR, slug + '.json'), data);
-  return { buildings: b.length, roads: rd.length, areas: ar.length };
+  return { buildings: b.length, roads: rd.length, areas: ar.length, trees: tr.length / 2 };
 }
 const photoJobs = new Set();
 function ensurePhoto(slug, w) {
