@@ -22,6 +22,7 @@ const MAX_PHOTO_BYTES = 3 * 1024 * 1024;
 const SCENE_DIR = path.join(DATA_DIR, 'scenes');
 const OVERPASS_API = process.env.OVERPASS_API || 'https://overpass-api.de/api/interpreter';
 const SCENE_HALF_M = 300;      // metres around the (rounded) place
+const SCENE_VERSION = 3; // bump when the scene data gains something new: older stored scenes are rebuilt on next use
 const SCENE_WAIT_MS = Number(process.env.SCENE_WAIT_MS) || 3000;
 const MAX_AREAS = 150, MAX_BUILDINGS = 900, MAX_ROADS = 300, MAX_TREES = 800, MAX_PTS = 40;
 
@@ -363,7 +364,9 @@ async function fetchScene(slug, geo) {
     const mh = Number.isFinite(mh0) ? mh0 : Number.isFinite(ml) ? ml * 3 : 0;
     if (mh > 0 && mh < h) ex.mh = Math.round(mh * 10) / 10;
     if (t['building:part']) ex.p = 1;
-    const rs = ['gabled', 'hipped', 'pyramidal', 'half-hipped', 'dome', 'skillion', 'flat'].includes(t['roof:shape']) ? t['roof:shape'] : null;
+    let rs = ['gabled', 'hipped', 'pyramidal', 'half-hipped', 'dome', 'skillion', 'flat'].includes(t['roof:shape']) ? t['roof:shape'] : null;
+    // houses are almost never flat-roofed; when the map does not say, assume a tiled roof (anything else stays flat)
+    if (!rs && ['house', 'detached', 'semidetached_house', 'terrace', 'bungalow', 'farm', 'cabin'].includes(t.building)) rs = pts.length <= 10 ? 'gabled' : 'hipped';
     if (rs && rs !== 'flat') ex.rs = rs;
     const rhT = num1(t['roof:height']), rl = num1(t['roof:levels']);
     if (Number.isFinite(rhT)) ex.rh = Math.min(12, Math.max(0.5, rhT)); else if (Number.isFinite(rl)) ex.rh = Math.min(12, Math.max(0.5, rl * 2.5));
@@ -427,7 +430,7 @@ async function fetchScene(slug, geo) {
   if (data.length > 1800 * 1024) throw new Error('scene too big');
   fs.mkdirSync(SCENE_DIR, { recursive: true });
   fs.writeFileSync(path.join(SCENE_DIR, slug + '.json'), data);
-  return { buildings: b.length, roads: rd.length, areas: ar.length, trees: tr.length / 2 };
+  return { buildings: b.length, roads: rd.length, areas: ar.length, trees: tr.length / 2, v: SCENE_VERSION };
 }
 const photoJobs = new Set();
 function ensurePhoto(slug, w) {
@@ -451,13 +454,13 @@ app.get('/api/walls/:slug/scene', async (req, res) => {
   const slug = req.params.slug.toLowerCase();
   const w = validSlug(slug) && db.walls[slug];
   if (!w) return res.status(404).end();
-  if (!w.scene && w.geo) { // walls made before scenes existed get theirs on first use; never keep the visitor waiting long
+  if (w.geo && (!w.scene || w.scene.v !== SCENE_VERSION)) { // missing (older wall) or built by an older version: (re)build, but never keep the visitor waiting long
     const job = ensureScene(slug, w);
     await Promise.race([job, new Promise((ok) => setTimeout(ok, SCENE_WAIT_MS))]);
     if (!w.scene) return res.status(202).json({ pending: sceneJobs.has(slug) });
   }
   if (!w.scene) return res.status(404).end();
-  res.set('Cache-Control', 'public, max-age=86400').type('application/json').sendFile(path.join(SCENE_DIR, slug + '.json'), (e) => { if (e && !res.headersSent) res.status(404).end(); });
+  res.set('Cache-Control', 'no-cache').type('application/json').sendFile(path.join(SCENE_DIR, slug + '.json'), (e) => { if (e && !res.headersSent) res.status(404).end(); });
 });
 
 // Walls that have a place (for the map)
