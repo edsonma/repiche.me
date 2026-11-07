@@ -1,8 +1,53 @@
 # repiche.me
 
-Draft clone of [piche.me](https://deriva-telar.fau.usp.br/piche-me/), the Brazilian social network (2011-2015) where anyone could "pichar" a virtual wall, no login needed.
+**A wall where anyone can write whatever they want. No account, no login, just a wall.**
 
-Stack: Node.js + Express (API, JSON file storage) and Vue 3 (served locally, no build step).
+repiche.me is a tribute to **piche.me**, the Brazilian site where, from 2011 to 2015, anyone could walk up to a virtual wall and "pichar" it: leave a message in their own handwriting-style font, color and size, anonymously, for the next stranger to read. Every address was a wall (`piche.me/yourname`), and the whole internet felt a little like a city.
+
+This project brings that wall back, and then asks: what if the wall were a place?
+
+## The idea
+
+> *In 24 hours of one weekend, a team of friends put online a virtual wall where anyone can write whatever they like.*
+
+The original piche.me was born from a simple thought. According to the press at the time, one of its founders got the idea while watching a documentary about the fall of the Berlin Wall: a wall that people covered with words. The site went online in 2011, spread quickly, and was switched off in 2015.
+
+repiche.me keeps the same spirit (free, anonymous, immediate) and builds on it:
+
+- **Every address is a wall.** Open `/anything` and that wall is yours. You choose how it looks (brick, concrete, tiles, wood, paper...) and then it is locked, like a real wall that has been painted.
+- **Scribbles are permanent in form, but not in time.** Once you fix a scribble you cannot edit or move it. Anonymous scribbles fade away after a week unless other people "support" them (♥ apoiar). Signed scribbles stay forever. A wall is kept alive by the people who care about what is on it.
+- **A wall can be a real place.** Tie a wall to a spot on the map (a square, a street) and walk up to it in 3D: a first-person, Minecraft-style view where the street around the wall is rebuilt from real OpenStreetMap data, with buildings, roofs, trees, parks, sand and sea. A radar shows other walls nearby, and the map jumps you from one to another.
+- **A little nostalgia.** A lost visitor wanders the 3D street asking where the original crowd went. He will tell you who they were.
+- **Modo clássico.** One button gives the page a flat early-2010s look, for the sensation of an upgrade.
+
+## Credits
+
+### The original piche.me
+
+piche.me was created in 2011 by a group of friends from Brasília, over a single weekend.
+
+- **Túlio Ornelas**: software engineer and one of the founders (Correio Braziliense, 2011).
+- **Wesley Rocha**: interface designer (Correio Braziliense, 2011).
+- **Renan**, **Karina Macedo**, **Rodrigo Ramalho** and **Celio Latorraca**: members of the original team. No public source states their roles, so none is invented here.
+
+All the credit for the idea and the original site belongs to them. repiche.me is an **unofficial homage**, written from scratch, and is not affiliated with or endorsed by the original creators. If you are one of them and would like something changed, please open an issue.
+
+Sources: [Correio Braziliense (2011)](https://www.correiobraziliense.com.br/app/noticia/tecnologia/2011/07/01/interna_tecnologia,259239/site-permite-que-internautas-deixem-mensagem-em-muros-vira-febre-na-rede.shtml), [deriva~telar, FAU-USP](https://deriva-telar.fau.usp.br/piche-me/) and [piche.me on the Web Archive, 26/10/2011](http://web.archive.org/web/20111026051021/http://piche.me/). The in-app "créditos" button and the lost visitor show the same list.
+
+### Built with the help of
+
+- [OpenStreetMap](https://www.openstreetmap.org/) contributors (map data, ODbL) and the Overpass API: the street, buildings and terrain in 3D.
+- [Mapillary](https://www.mapillary.com/) contributors (optional street photos, CC BY-SA 4.0) and Esri World Imagery (satellite map tiles).
+- [Leaflet](https://leafletjs.com/), [Three.js](https://threejs.org/), [Vue](https://vuejs.org/) and [Express](https://expressjs.com/).
+- Fonts from Google Fonts. The 3D music is original, synthesized live in the browser: no samples, no existing song.
+
+Google Street View imagery is deliberately not used (its terms do not allow it), and OpenStreetMap has no facade photos, so the 3D streets are rebuilt from map data and are not photographic.
+
+---
+
+# Technical documentation
+
+Node.js + Express (API, JSON file storage) and Vue 3 + Three.js (served locally, no build step), deployed on Railway.
 
 ## Run
 
