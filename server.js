@@ -328,7 +328,7 @@ async function fetchScene(slug, geo) {
   const dLat = SCENE_HALF_M / 110540, dLon = SCENE_HALF_M / (111320 * Math.cos((geo.lat * Math.PI) / 180));
   const bb = [geo.lat - dLat, geo.lon - dLon, geo.lat + dLat, geo.lon + dLon].map((n) => n.toFixed(6)).join(',');
   // buildings, roads, and the ground: water, sand (beaches), parks and the coastline itself
-  const query = `[out:json][timeout:12];(way["building"](${bb});way["highway"](${bb});way["natural"~"^(water|beach|sand|coastline)$"](${bb});way["leisure"~"^(park|garden|pitch|playground)$"](${bb});way["landuse"~"^(grass|forest|meadow|recreation_ground|village_green)$"](${bb});node["natural"="tree"](${bb}););out tags geom(${bb}) 3000;`; // geom(bbox): geometry clipped to the box, points outside come back null
+  const query = `[out:json][timeout:12];(way["building"](${bb});way["building:part"](${bb});relation["building"](${bb});node["name"]["shop"](${bb});node["name"]["amenity"](${bb});way["highway"](${bb});way["natural"~"^(water|beach|sand|coastline)$"](${bb});way["leisure"~"^(park|garden|pitch|playground)$"](${bb});way["landuse"~"^(grass|forest|meadow|recreation_ground|village_green)$"](${bb});node["natural"="tree"](${bb}););out tags geom(${bb}) 4000;`; // geom(bbox): geometry clipped to the box, points outside come back null
   const r = await fetch(OVERPASS_API, {
     method: 'POST', signal: AbortSignal.timeout(15000),
     headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'User-Agent': 'repiche.me (graffiti wall; github.com/edsonma/repiche.me)' },
@@ -337,9 +337,9 @@ async function fetchScene(slug, geo) {
   if (!r.ok) throw new Error('overpass ' + r.status);
   const els = ((await r.json()).elements || []);
   const kx = 111320 * Math.cos((geo.lat * Math.PI) / 180), kz = 110540;
-  const toXZ = (g) => {
+  const toXZ = (g, maxPts = MAX_PTS) => {
     const out = [];
-    const step = Math.max(1, Math.ceil(g.length / MAX_PTS));
+    const step = Math.max(1, Math.ceil(g.length / maxPts));
     for (let i = 0; i < g.length; i += step) {
       const p = g[i];
       if (!p || typeof p.lat !== 'number' || typeof p.lon !== 'number') return null;
@@ -350,8 +350,46 @@ async function fetchScene(slug, geo) {
     return out;
   };
   const ROAD_W = { motorway: 11, trunk: 10, primary: 9, secondary: 8, tertiary: 7, residential: 6, unclassified: 6, living_street: 5, service: 4, pedestrian: 4, footway: 1.6, path: 1.6, cycleway: 2, steps: 1.6, track: 3 };
-  const b = [], rd = [], ar = [], tr = [];
+  const b = [], rd = [], ar = [], tr = [], poi = [];
+  const num1 = (v) => { const n = parseFloat(v); return Number.isFinite(n) ? n : NaN; };
+  const cssColour = (v) => (typeof v === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/.test(v) ? v : null);
+  // one building (or building:part) with what OpenStreetMap knows about it: height, floor it starts at, roof, colours, material
+  function pushBuilding(t, pts, holes) {
+    const lv = num1(t['building:levels']), hh = num1(t.height), mh0 = num1(t.min_height), ml = num1(t['building:min_level']);
+    const small = ['garage', 'garages', 'shed', 'roof', 'carport', 'kiosk', 'hut', 'cabin'].includes(t.building);
+    let h = Number.isFinite(hh) ? hh : Number.isFinite(lv) ? lv * 3 + 1 : small ? 3 : 6 + (Math.abs(pts[0] * 7 + pts[1] * 13) % 6);
+    h = Math.round(Math.min(150, Math.max(2.5, h)) * 10) / 10;
+    const ex = {};
+    const mh = Number.isFinite(mh0) ? mh0 : Number.isFinite(ml) ? ml * 3 : 0;
+    if (mh > 0 && mh < h) ex.mh = Math.round(mh * 10) / 10;
+    if (t['building:part']) ex.p = 1;
+    const rs = ['gabled', 'hipped', 'pyramidal', 'half-hipped', 'dome', 'skillion', 'flat'].includes(t['roof:shape']) ? t['roof:shape'] : null;
+    if (rs && rs !== 'flat') ex.rs = rs;
+    const rhT = num1(t['roof:height']), rl = num1(t['roof:levels']);
+    if (Number.isFinite(rhT)) ex.rh = Math.min(12, Math.max(0.5, rhT)); else if (Number.isFinite(rl)) ex.rh = Math.min(12, Math.max(0.5, rl * 2.5));
+    const rc = cssColour(t['roof:colour']); if (rc) ex.rc = rc;
+    const mat = String(t['building:material'] || t.material || '').toLowerCase();
+    if (/glass|steel|metal/.test(mat)) ex.m = 'glass'; else if (/brick|stone|sandstone/.test(mat)) ex.m = 'brick';
+    else if (/^(office|commercial|retail|hotel|hospital)$/.test(t.building) && h > 15) ex.m = 'glass';
+    if (holes.length) ex.ho = holes.slice(0, 4);
+    const colour = cssColour(t['building:colour'] || t.colour);
+    b.push([h, pts, colour || null, ...(Object.keys(ex).length ? [ex] : [])]);
+  }
   for (const e of els) {
+    if (e.type === 'relation' && e.tags && e.tags.building && Array.isArray(e.members) && b.length < MAX_BUILDINGS) {
+      // a building with a courtyard (multipolygon): closed outer ring(s) plus inner rings as holes
+      const ring = (m) => (m.geometry && m.geometry.length > 3 && m.geometry[0] && m.geometry.at(-1) && m.geometry[0].lat === m.geometry.at(-1).lat && m.geometry[0].lon === m.geometry.at(-1).lon ? toXZ(m.geometry, 80) : null);
+      const outer = e.members.filter((m) => m.role === 'outer').map(ring).filter((r) => r && r.length >= 6);
+      const inner = e.members.filter((m) => m.role === 'inner').map(ring).filter((r) => r && r.length >= 6);
+      for (const o of outer.slice(0, 3)) pushBuilding(e.tags, o, inner);
+      continue;
+    }
+    if (e.type === 'node' && e.tags && e.tags.name && (e.tags.shop || e.tags.amenity) && typeof e.lat === 'number' && typeof e.lon === 'number') {
+      const x = (e.lon - geo.lon) * kx, z = -(e.lat - geo.lat) * kz;
+      const name = String(e.tags.name).replace(/[\u0000-\u001F\u007F-\u009F\u200B-\u200F\u2028-\u202E\u2060-\u2069\uFEFF]/g, '').replace(/\s+/g, ' ').trim().slice(0, 28);
+      if (name && poi.length < 60 && Math.abs(x) < 400 && Math.abs(z) < 400) poi.push([Math.round(x * 10) / 10, Math.round(z * 10) / 10, name]);
+      continue;
+    }
     if (e.type === 'node' && e.tags && e.tags.natural === 'tree' && typeof e.lat === 'number' && typeof e.lon === 'number') {
       const x = (e.lon - geo.lon) * kx, z = -(e.lat - geo.lat) * kz;
       if (tr.length < MAX_TREES * 2 && Math.abs(x) < 600 && Math.abs(z) < 600) tr.push(Math.round(x * 10) / 10, Math.round(z * 10) / 10);
@@ -359,14 +397,10 @@ async function fetchScene(slug, geo) {
     }
     if (e.type !== 'way' || !Array.isArray(e.geometry) || !e.geometry.length) continue;
     const t = e.tags || {};
-    if (t.building && b.length < MAX_BUILDINGS) {
-      const pts = toXZ(e.geometry);
+    if ((t.building || t['building:part']) && b.length < MAX_BUILDINGS) {
+      const pts = toXZ(e.geometry, 80);
       if (!pts || pts.length < 6) continue;
-      const lv = parseFloat(t['building:levels']), hh = parseFloat(t.height);
-      const h = Number.isFinite(hh) ? hh : Number.isFinite(lv) ? lv * 3 : 6 + (Math.abs(pts[0] * 7 + pts[1] * 13) % 6);
-      const small = ['garage', 'garages', 'shed', 'roof', 'carport', 'kiosk', 'hut', 'cabin'].includes(t.building);
-      const colour = typeof (t['building:colour'] || t.colour) === 'string' && /^(#[0-9a-fA-F]{3,8}|[a-zA-Z]{3,20})$/.test(t['building:colour'] || t.colour) ? (t['building:colour'] || t.colour) : null;
-      b.push([Math.round(Math.min(120, Math.max(2.5, small && !Number.isFinite(hh) && !Number.isFinite(lv) ? 3 : h)) * 10) / 10, pts, ...(colour ? [colour] : [])]);
+      pushBuilding(t, pts, []);
     } else if ((t.natural || t.leisure || t.landuse) && ar.length < MAX_AREAS) {
       // 'c' = coastline (open line, the sea is on its right-hand side); w / s / g = closed water / sand / green areas
       const kind = t.natural === 'coastline' ? 'c' : t.natural === 'water' ? 'w' : (t.natural === 'beach' || t.natural === 'sand') ? 's' : (t.leisure || t.landuse) ? 'g' : null;
@@ -389,8 +423,8 @@ async function fetchScene(slug, geo) {
     }
   }
   if (!b.length && !rd.length && !ar.length) return null;
-  const data = JSON.stringify({ b, r: rd, a: ar, t: tr });
-  if (data.length > 1200 * 1024) throw new Error('scene too big');
+  const data = JSON.stringify({ b, r: rd, a: ar, t: tr, p: poi });
+  if (data.length > 1800 * 1024) throw new Error('scene too big');
   fs.mkdirSync(SCENE_DIR, { recursive: true });
   fs.writeFileSync(path.join(SCENE_DIR, slug + '.json'), data);
   return { buildings: b.length, roads: rd.length, areas: ar.length, trees: tr.length / 2 };

@@ -250,7 +250,14 @@ const TOKEN = 'correct-horse-battery-staple';
         { type: 'way', tags: { building: 'yes' }, geometry: g([[0, 5]]) },
         { type: 'node', id: 1 },
       ];
+      const ring = (la, lo, w) => g([[la, lo], [la, lo + w], [la + w, lo + w], [la + w, lo], [la, lo]]);
       els.push(
+        { type: 'way', tags: { building: 'house', 'roof:shape': 'gabled', 'roof:colour': '#aa3322', 'roof:height': '2' }, geometry: ring(0.0030, 0.0008, 0.0003) },
+        { type: 'way', tags: { building: 'commercial', 'building:material': 'glass', height: '40' }, geometry: ring(0.0030, 0.0014, 0.0003) },
+        { type: 'relation', tags: { building: 'yes', 'building:levels': '3' }, members: [{ role: 'outer', geometry: ring(0.0034, -0.0010, 0.0006) }, { role: 'inner', geometry: ring(0.0036, -0.0008, 0.0002) }] },
+        { type: 'way', tags: { 'building:part': 'yes', min_height: '10', height: '30' }, geometry: ring(0.0034, 0.0004, 0.0003) },
+        { type: 'node', tags: { name: 'Padaria <b>X</b>', shop: 'bakery' }, lat: -23.5496, lon: -46.6296 },
+        { type: 'node', tags: { shop: 'bakery' }, lat: -23.5496, lon: -46.6296 },
         { type: 'way', tags: { natural: 'coastline' }, geometry: g([[0.0004, -0.0020], [0.0004, 0.0], [0.0004, 0.0020]]) },
         { type: 'way', tags: { natural: 'water' }, geometry: g([[0.0020, 0.0], [0.0020, 0.0006], [0.0014, 0.0006], [0.0014, 0.0]]) },
         { type: 'way', tags: { natural: 'beach' }, geometry: g([[0.0005, 0.0], [0.0005, 0.0006], [0.0010, 0.0006], [0.0010, 0.0]]) },
@@ -269,17 +276,19 @@ const TOKEN = 'correct-horse-battery-staple';
   let oj = await or.json();
   check('creating a wall is instant even though Overpass takes 1.5 s', or.status === 201 && oj.scenePending === true && Date.now() - t0 < 1000, `${Date.now() - t0} ms`);
   const gotScene = await until(async () => (await (await fetch(`${os.base}/api/walls/bairro`)).json()).scene, 6000);
-  check('the scene is fetched in the background (1 building + 1 road, junk dropped; coast, sea, sand and park kept)', gotScene && gotScene.buildings === 1 && gotScene.roads === 1 && gotScene.areas === 4, JSON.stringify(gotScene));
+  check('the scene is fetched in the background (1 building + 1 road, junk dropped; coast, sea, sand and park kept)', gotScene && gotScene.buildings === 5 && gotScene.roads === 1 && gotScene.areas === 4, JSON.stringify(gotScene));
   check('Overpass is asked once, with a bbox, for buildings, roads and terrain', hits2.length === 1 && /way\["building"\]/.test(hits2[0]) && /way\["highway"\]/.test(hits2[0]) && /coastline/.test(hits2[0]) && /geom\(/.test(hits2[0]));
   const sc = await (await fetch(`${os.base}/api/walls/bairro/scene`)).json();
   check('real trees and building colours/road widths come through', sc.t.length === 2 && sc.b.every((x) => x.length >= 2) && sc.r[0][0] === 6, JSON.stringify([sc.t, sc.r[0][0]]));
+  const byTag = (f) => sc.b.find(f);
+  check('roofs, materials, courtyards, building parts and named shops are kept', !!byTag((x) => x[3] && x[3].rs === 'gabled' && x[3].rc === '#aa3322' && x[3].rh === 2) && !!byTag((x) => x[3] && x[3].m === 'glass' && x[0] === 40) && !!byTag((x) => x[3] && x[3].ho && x[3].ho.length === 1) && !!byTag((x) => x[3] && x[3].p === 1 && x[3].mh === 10) && sc.p.length === 1 && sc.p[0][2] === 'Padaria <b>X</b>', JSON.stringify(sc.p));
   check('terrain areas are typed (c coast, w water, s sand, g green)', sc.a.map((x) => x[0]).sort().join('') === 'cgsw', JSON.stringify(sc.a).slice(0, 200));
-  check('scene JSON is compact metres around the place (north = -z)', sc.b.length === 1 && sc.b[0][0] === 15 && sc.b[0][1].length === 8 && sc.b[0][1].every(Number.isFinite) && sc.b[0][1][1] < 0, JSON.stringify(sc).slice(0, 160));
+  check('scene JSON is compact metres around the place (north = -z)', sc.b.length === 5 && sc.b.some((x) => x[0] === 16 && x[1].length === 8 && x[1].every(Number.isFinite) && x[1][1] < 0), JSON.stringify(sc).slice(0, 160));
   check('GET wall flags the scene; unknown walls have none', !!(await (await fetch(`${os.base}/api/walls/bairro`)).json()).scene && (await fetch(`${os.base}/api/walls/nada/scene`)).status === 404 && (await fetch(`${os.base}/api/walls/__proto__/scene`)).status === 404);
   await sleep(2200);
   await setupO('antigo', { geo: { lat: -23.55, lon: -46.63 } }); // has a place but no scene (like walls made before scenes existed)
   const lz = await fetch(`${os.base}/api/walls/antigo/scene`);
-  check('a wall with a place but no scene gets one on first request (once)', lz.status === 200 && (await lz.json()).b.length === 1 && (await fetch(`${os.base}/api/walls/antigo/scene`)).status === 200 && hits2.length === 2, String(hits2.length));
+  check('a wall with a place but no scene gets one on first request (once)', lz.status === 200 && (await lz.json()).b.length === 5 && (await fetch(`${os.base}/api/walls/antigo/scene`)).status === 200 && hits2.length === 2, String(hits2.length));
   check('a wall with no place has no scene', (await fetch(`${os.base}/api/walls/semlugar2/scene`)).status === 404);
   await os.stop(); fk.close(); }
 
